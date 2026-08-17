@@ -1,6 +1,6 @@
 ---
 name: tokio-async-patterns
-description: Use this skill whenever writing or editing Rust code that uses tokio::spawn, async move blocks or closures, shared state across async tasks (Arc<Mutex<...>>, channels, Weak handles), or code that reads output from a long-running child process (tokio::process::Command with piped stdout/stderr, BufReader, AsyncBufReadExt::lines()). Also use it whenever `let _ = ...` appears in Rust and you need to judge whether discarding that Result is intentional, or whenever streamed output (child-process logs, sensor readings, event streams) needs to be aggregated into a shared buffer that another task or a UI reads. Trigger this even if the request doesn't say "tokio" or "async" explicitly, as long as the code has async fn, .await, or tokio:: in it.
+description: Use this skill whenever writing or editing Rust code that uses tokio::spawn, async move blocks or closures, shared state across async tasks (Arc Mutex channels, Weak handles), or code that reads output from a long-running child process (tokio::process::Command with piped stdout/stderr, BufReader, AsyncBufReadExt::lines()). Also use it whenever `let _ = ...` appears in Rust and you need to judge whether discarding that Result is intentional, or whenever streamed output (child-process logs, sensor readings, event streams) needs to be aggregated into a shared buffer that another task or a UI reads. Trigger this even if the request doesn't say "tokio" or "async" explicitly, as long as the code has async fn, .await, or tokio:: in it.
 ---
 
 ## Why this skill exists
