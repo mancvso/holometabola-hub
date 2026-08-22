@@ -1,9 +1,9 @@
-import { Button, VerticalBox, HorizontalBox, GroupBox } from "std-widgets.slint";
+import { Button, VerticalBox, HorizontalBox, GroupBox, LineEdit } from "std-widgets.slint";
 
 export component AppWindow inherits Window {
     title: "Live Audio Control Plane";
     width: 500px;
-    height: 860px;
+    height: 1000px;
     background: #1e1e24;
 
     in property <string> orbits-status: "Offline";
@@ -11,6 +11,7 @@ export component AppWindow inherits Window {
     in property <color> orbits-color: #ff5555;
     in property <color> vocals-color: #ff5555;
     in property <int> lates-count: 0;
+    in-out property <string> session-name: "session";
 
     callback boot-orbits-scsynth();
     callback boot-orbits-sclang();
@@ -25,6 +26,8 @@ export component AppWindow inherits Window {
     callback tidal-test-pattern();
     callback tidal-hush();
     callback stop-tidal();
+    callback rec-start();
+    callback rec-stop();
 
     VerticalBox {
         padding: 20px;
@@ -121,6 +124,41 @@ export component AppWindow inherits Window {
                         text: "HUSH";
                         clicked => { root.tidal-hush(); }
                     }
+                }
+            }
+        }
+
+        GroupBox {
+            title: "Recording";
+            VerticalBox {
+                spacing: 10px;
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Session: ";
+                        color: #aaaaaa;
+                        vertical-alignment: center;
+                    }
+                    LineEdit {
+                        text <=> root.session-name;
+                        placeholder-text: "session or song name";
+                    }
+                }
+                HorizontalBox {
+                    spacing: 10px;
+                    Button {
+                        text: "REC START";
+                        clicked => { root.rec-start(); }
+                    }
+                    Button {
+                        text: "REC STOP";
+                        clicked => { root.rec-stop(); }
+                    }
+                }
+                Text {
+                    text: "18 stems -> Hub/recordings/<session>_<timestamp>/";
+                    color: #888888;
+                    font-size: 10px;
                 }
             }
         }

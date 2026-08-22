@@ -66,7 +66,7 @@ type ProcIn = Arc<Mutex<Option<tokio::process::ChildStdin>>>;
 // stdout/stderr are streamed into the log.
 async fn spawn_proc(
     name: &'static str,
-    args: Vec<&'static str>,
+    args: Vec<String>,
     init: Option<&'static str>,
     slot: ProcIn,
     ui_weak: slint::Weak<AppWindow>,
@@ -145,7 +145,7 @@ async fn spawn_proc(
 async fn boot_server(
     name: &'static str,
     port: &'static str,
-    args: Vec<&'static str>,
+    args: Vec<String>,
     init: Option<&'static str>,
     slot: ProcIn,
     ui_weak: slint::Weak<AppWindow>,
@@ -167,7 +167,7 @@ async fn send_line(
     name: &'static str,
     slot: ProcIn,
     ui_weak: slint::Weak<AppWindow>,
-    code: &'static str,
+    code: String,
 ) {
     let mut guard = slot.lock().await;
     let Some(stdin) = guard.as_mut() else {
@@ -204,8 +204,18 @@ const SCLANG_PORT: &str = "6120"; // sclang langPort; SuperDirt's /n_end respond
 const ORBITS_JACK_CLIENT: &str = "orbits";
 const ONYX_CLIENT: &str = "Onyx Artist 1-2 Pro";
 
+// Two stereo channels per orbit. Must match ~hubOutChans in startup.scd, which
+// derives it as (~hubGroups.size * ~hubPerGroup * 2) -- 36 today, 72 once the
+// rig grows to 36 orbits across 4 groups. Both the CONNECT wiring and the
+// direct scsynth boot's -o read from here.
+const ORBITS_OUT_CHANNELS: u32 = 36;
+
+fn owned(args: &[&str]) -> Vec<String> {
+    args.iter().map(|a| a.to_string()).collect()
+}
+
 fn orbits_connect_pairs() -> Vec<(String, String)> {
-    (1..=36)
+    (1..=ORBITS_OUT_CHANNELS)
         .map(|i| {
             let src = format!("{ORBITS_JACK_CLIENT}:out_{i}");
             let dst = if i % 2 == 1 {
@@ -246,8 +256,15 @@ fn connect_orbits(ui_weak: slint::Weak<AppWindow>) {
 // .scd can change them afterwards -- so they mirror the s.options block in
 // Hub/startup.scd. A client that allocates against larger limits than the
 // server actually has will get "Node/Group/SynthDef not found" back.
-fn orbits_scsynth_args() -> Vec<&'static str> {
-    vec![
+fn orbits_scsynth_args() -> Vec<String> {
+    let out_chans = ORBITS_OUT_CHANNELS.to_string();
+    // Same formula as startup.scd: hardware outs, plus private synth/dry/
+    // globalEffect busses per orbit, plus headroom. Has to grow with the
+    // orbit count rather than sit at a constant.
+    let orbits = ORBITS_OUT_CHANNELS / 2;
+    let audio_bus = (ORBITS_OUT_CHANNELS + (orbits * 8) + 128).max(1024).to_string();
+
+    owned(&[
         "taskset",
         "-c",
         "4",
@@ -271,9 +288,9 @@ fn orbits_scsynth_args() -> Vec<&'static str> {
         "-i",
         "0",
         "-o",
-        "36",
+        &out_chans,
         "-a",
-        "1056",
+        &audio_bus,
         "-b",
         "524288",
         "-n",
@@ -285,7 +302,7 @@ fn orbits_scsynth_args() -> Vec<&'static str> {
         "-l",
         "3",
         "-L",
-    ]
+    ])
 }
 
 // sclang boot: sclang spawns scsynth itself using the s.options in the boot
@@ -299,12 +316,12 @@ fn orbits_scsynth_args() -> Vec<&'static str> {
 // sclang blasted ~2500 /b_allocRead messages, scsynth could not be scheduled
 // to drain its UDP socket, so the kernel silently dropped them (and initTree's
 // /g_new with them). startup.scd pins scsynth alone via Server.program.
-fn orbits_sclang_args() -> Vec<&'static str> {
-    vec!["sclang", "-u", SCLANG_PORT]
+fn orbits_sclang_args() -> Vec<String> {
+    owned(&["sclang", "-u", SCLANG_PORT])
 }
 
-fn vocals_args() -> Vec<&'static str> {
-    vec![
+fn vocals_args() -> Vec<String> {
+    owned(&[
         "taskset",
         "-c",
         "5",
@@ -332,7 +349,7 @@ fn vocals_args() -> Vec<&'static str> {
         "-m",
         "65536",
         "-L",
-    ]
+    ])
 }
 
 const TIDAL_BOOT_FILE: &str = "/home/endo/Studio/Hub/BootTidal.hs";
@@ -340,8 +357,8 @@ const TIDAL_BOOT_FILE: &str = "/home/endo/Studio/Hub/BootTidal.hs";
 // ghci gets its own core, clear of the audio cores (4 = orbits, 5 = vocals).
 // Deliberately no `chrt -f` here: giving a garbage-collected runtime realtime
 // FIFO priority lets a GC pause starve everything scheduled below it.
-fn tidal_args() -> Vec<&'static str> {
-    vec!["taskset", "-c", "6", "ghci", "-ghci-script", TIDAL_BOOT_FILE]
+fn tidal_args() -> Vec<String> {
+    owned(&["taskset", "-c", "6", "ghci", "-ghci-script", TIDAL_BOOT_FILE])
 }
 
 #[tokio::main]
@@ -426,7 +443,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 "orbits",
                 orbits_in.clone(),
                 ui_weak.clone(),
-                "s.queryAllNodes;",
+                "s.queryAllNodes;".to_string(),
             ));
         });
     }
@@ -441,7 +458,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 "orbits",
                 orbits_in.clone(),
                 ui_weak.clone(),
-                "s.initTree;",
+                "s.initTree;".to_string(),
             ));
         });
     }
@@ -491,7 +508,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 "tidal",
                 tidal_in.clone(),
                 ui_weak.clone(),
-                r#"d1 $ s "bd*4""#,
+                r#"d1 $ s "bd*4""#.to_string(),
             ));
         });
     }
@@ -504,7 +521,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 "tidal",
                 tidal_in.clone(),
                 ui_weak.clone(),
-                "hush",
+                "hush".to_string(),
             ));
         });
     }
@@ -518,7 +535,48 @@ async fn main() -> Result<(), slint::PlatformError> {
                 "tidal",
                 tidal_in.clone(),
                 ui_weak.clone(),
-                ":quit",
+                ":quit".to_string(),
+            ));
+        });
+    }
+
+    // Recording. The label lands in both an sclang string literal and a
+    // filesystem path, so keep it to characters that are safe in both.
+    {
+        let ui_weak = ui_weak.clone();
+        let orbits_in = orbits_in.clone();
+        ui.on_rec_start(move || {
+            let label = ui_weak
+                .upgrade()
+                .map(|ui| ui.get_session_name().to_string())
+                .unwrap_or_default();
+            let label: String = label
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            let label = if label.is_empty() {
+                "session".to_string()
+            } else {
+                label
+            };
+            tokio::spawn(send_line(
+                "orbits",
+                orbits_in.clone(),
+                ui_weak.clone(),
+                format!("~hubRecStart.value(\"{label}\");"),
+            ));
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let orbits_in = orbits_in.clone();
+        ui.on_rec_stop(move || {
+            tokio::spawn(send_line(
+                "orbits",
+                orbits_in.clone(),
+                ui_weak.clone(),
+                "~hubRecStop.value;".to_string(),
             ));
         });
     }

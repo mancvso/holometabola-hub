@@ -1,9 +1,13 @@
 /*
 Studio/Hub -- SuperCollider boot file for the "orbits" stack.
 
-All ports are moved out of the SuperCollider/SuperDirt defaults so that a stray
-sclang (an IDE session, another SuperDirt) can never silently take a socket we
-depend on:
+Everything scale-dependent is derived from the CONFIG block below. Growing from
+18 stereo orbits in 3 groups to 36 in 4 is a two-line edit there; the output bus
+count, the orbit bus list, the ~b1../~l1.. handles and the recorder stem names
+all follow from it. Nothing downstream hardcodes 18, 36 or the group letters.
+
+Ports are held out of the SuperCollider/SuperDirt defaults so a stray sclang (an
+IDE session, another SuperDirt) can never silently take a socket we depend on:
 
     6110  scsynth            <- must equal Tidal's oBusPort
     6120  sclang langPort    <- set with `sclang -u 6120`, NOT settable here
@@ -15,6 +19,40 @@ below actually applied -- options set inside a reboot callback only take effect
 on the *following* boot, which is what made this file's values look inert.
 */
 (
+// ---------------------------------------------------------------- CONFIG ----
+~hubGroups     = [ "b", "l", "a" ];   // one entry per group; add a 4th here
+~hubPerGroup   = 6;                   // orbits per group; 9 gives 36 total
+~hubScsynthPort = 6110;
+~hubDirtPort    = 6122;
+~hubSampleRate  = 48000;
+~hubCore        = 4;                  // CPU core reserved for scsynth
+
+/*
+Remote Tidal (Tidal on the laptop, this stack on the headless box).
+
+sclang and scsynth are always co-located -- sclang boots scsynth as a child --
+so sclang always talks to it over loopback. What changes for a remote Tidal is
+who else is allowed to reach them, and these are two independent things:
+
+  ~hubScsynthBind  what scsynth binds to. Tidal writes control busses DIRECTLY
+                   to scsynth via oBusPort, so on loopback-only a remote Tidal's
+                   bus writes vanish with no error. Set "0.0.0.0" to open it.
+  ~hubTidalSender  the source filter on SuperDirt's OSC responders. The stock
+                   NetAddr("127.0.0.1") drops everything from another host. Set
+                   it to the laptop's IP, or nil to accept from anywhere.
+
+Both are the "just an IP change" -- but changing only one looks like a total
+silence with a perfectly healthy-looking log on both machines.
+*/
+~hubScsynthBind = "127.0.0.1";
+~hubTidalSender = NetAddr("127.0.0.1");
+
+// Derived -- do not edit.
+~hubOrbits   = ~hubGroups.size * ~hubPerGroup;
+~hubOutChans = ~hubOrbits * 2;                        // stereo per orbit
+~hubBusses   = (0, 2 .. (~hubOrbits - 1) * 2);        // even bus per orbit
+// ------------------------------------------------------------ END CONFIG ----
+
 // Pin and prioritise scsynth HERE rather than on sclang's own command line.
 // A child inherits CPU affinity and scheduling policy, so pinning sclang put
 // sclang and scsynth on one core at SCHED_FIFO 80 -- and under FIFO an equal
@@ -23,24 +61,30 @@ on the *following* boot, which is what made this file's values look inert.
 // to drain its UDP socket, so the kernel silently discarded them, along with
 // initTree's /g_new. Result: sclang believed the buffers and node tree existed
 // while the server had neither, with no error on either side.
-Server.program = "exec taskset -c 4 chrt -f 80 pw-jack -p 128 scsynth";
+Server.program = "exec taskset -c % chrt -f 80 pw-jack -p 128 scsynth -B %"
+	.format(~hubCore, ~hubScsynthBind);
 
 // The stock `s` / Server.default is hardwired to 127.0.0.1:57110 at class init,
-// so replace the object rather than trying to mutate its address.
-Server.default = Server(\orbits, NetAddr("127.0.0.1", 6110));
+// so replace the object rather than trying to mutate its address. sclang always
+// reaches its own child over loopback regardless of what scsynth binds.
+Server.default = Server(\orbits, NetAddr("127.0.0.1", ~hubScsynthPort));
 s = Server.default;
 
-s.options.device = "orbits";        // JACK client name -> orbits:out_1 .. out_36
-s.options.sampleRate = 48000;
+s.options.device = "orbits";        // JACK client name -> orbits:out_1 ..
+s.options.sampleRate = ~hubSampleRate;
 s.options.hardwareBufferSize = 128;
 s.options.blockSize = 128;
 s.options.numBuffers = 2048 * 256;  // sample buffers; SuperDirt needs thousands
 s.options.memSize = 8192 * 64;      // realtime memory, KB
 s.options.numWireBufs = 256;        // raise if "exceeded number of interconnect buffers"
 s.options.maxNodes = 1024 * 512;    // raise if "too many nodes"
-s.options.numOutputBusChannels = 36;
+s.options.numOutputBusChannels = ~hubOutChans;
 s.options.numInputBusChannels = 0;
 s.options.maxLogins = 3;            // hard limit is 32; every client must agree
+
+// Each orbit needs private synth/dry/globalEffect busses on top of the hardware
+// outs, so this has to grow with the orbit count rather than stay at a constant.
+s.options.numAudioBusChannels = max(1024, ~hubOutChans + (~hubOrbits * 8) + 128);
 
 s.waitForBoot {
 	~dirt = SuperDirt(2, s);
@@ -48,8 +92,11 @@ s.waitForBoot {
 	~dirt.loadSoundFiles;
 	~dirt.loadSoundFiles("/home/endo.202511/Studio/Sampling/tidal-samples/*");
 
-	// 18 stereo orbits on even output busses. This port is what Tidal targets.
-	~dirt.start(6122, [ 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34 ]);
+	// A barrier before start: SuperDirt's own *start does this, and unbarriered
+	// bursts are exactly how the sample allocReads went missing before.
+	s.sync;
+
+	~dirt.start(~hubDirtPort, ~hubBusses, ~hubTidalSender);
 
 	(
 		MIDIClient.init;
@@ -58,20 +105,26 @@ s.waitForBoot {
 		~dirt.soundLibrary.addMIDI(\midi0, ~midithroughport0);
 	);
 
-	// Convenient orbit handles from sclang.
-	(
-		~b1 = ~dirt.orbits[0];  ~b2 = ~dirt.orbits[1];  ~b3 = ~dirt.orbits[2];
-		~b4 = ~dirt.orbits[3];  ~b5 = ~dirt.orbits[4];  ~b6 = ~dirt.orbits[5];
-		~l1 = ~dirt.orbits[6];  ~l2 = ~dirt.orbits[7];  ~l3 = ~dirt.orbits[8];
-		~l4 = ~dirt.orbits[9];  ~l5 = ~dirt.orbits[10]; ~l6 = ~dirt.orbits[11];
-		~a1 = ~dirt.orbits[12]; ~a2 = ~dirt.orbits[13]; ~a3 = ~dirt.orbits[14];
-		~a4 = ~dirt.orbits[15]; ~a5 = ~dirt.orbits[16]; ~a6 = ~dirt.orbits[17];
-	);
+	// Orbit handles: ~b1..~b<n>, ~l1.., ~a1.. built from CONFIG rather than
+	// written out, so a 4th group or a different group size needs no edit here.
+	~hubGroups.do { |g, gi|
+		~hubPerGroup.do { |i|
+			currentEnvironment.put(
+				(g ++ (i + 1)).asSymbol,
+				~dirt.orbits[(gi * ~hubPerGroup) + i]
+			);
+		};
+	};
+
+	// Reloadable modules. Each only defines things, so any of them can be
+	// re-.load'ed from the app at runtime without rebooting the stack.
+	"/home/endo/Studio/Hub/recording.scd".load;
 
 	// SuperDirt's /n_end responder binds to langPort; if that is not 6120 the
 	// flotsam dictionary never gets cleared and /n_set errors pile up forever.
-	"HUB: scsynth=% langPort=% dirt=6122 clientID=%".format(
-		s.addr.port, NetAddr.langPort, s.clientID
+	"HUB: scsynth=% langPort=% dirt=% clientID=% orbits=% outChans=%".format(
+		s.addr.port, NetAddr.langPort, ~hubDirtPort, s.clientID,
+		~hubOrbits, ~hubOutChans
 	).postln;
 };
 
