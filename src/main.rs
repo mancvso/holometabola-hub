@@ -1,8 +1,10 @@
 use slint::{Color, ComponentHandle};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::Mutex;
 
 slint::include_modules!();
 
@@ -49,41 +51,63 @@ fn kill_server(ui_weak: &slint::Weak<AppWindow>, port: &str) {
 }
 
 fn kill_orbits(ui_weak: &slint::Weak<AppWindow>) {
-    kill_server(ui_weak, "57110");
-    let pattern = format!("sclang -D {}", ORBITS_BOOT_FILE);
+    kill_server(ui_weak, ORBITS_PORT);
+    // The boot file arrives on stdin, so the port is what identifies our sclang.
+    let pattern = format!("sclang -u {}", SCLANG_PORT);
     log_line(ui_weak, format!("$ pkill -f \"{pattern}\""));
     let _ = Command::new("pkill").args(["-f", &pattern]).status();
 }
 
-async fn boot_scsynth(
+// A child process we keep talking to: its stdin, parked for later writes.
+type ProcIn = Arc<Mutex<Option<tokio::process::ChildStdin>>>;
+
+// Every child goes through here. stdin is always piped -- both so we can send
+// it commands, and so it never inherits (and blocks on) the app's own terminal.
+// stdout/stderr are streamed into the log.
+async fn spawn_proc(
     name: &'static str,
-    port: &'static str,
     args: Vec<&'static str>,
+    init: Option<&'static str>,
+    slot: ProcIn,
     ui_weak: slint::Weak<AppWindow>,
 ) {
-    if is_process_running(port) {
-        log_line(
-            &ui_weak,
-            format!("[{name}] already running on {port}, skipping boot"),
-        );
+    // Held across the spawn so a double-click cannot start a second copy.
+    let mut guard = slot.lock().await;
+    if guard.is_some() {
+        log_line(&ui_weak, format!("[{name}] already running"));
         return;
     }
 
-    log_line(&ui_weak, format!("[{name}] booting on port {port}..."));
     log_line(&ui_weak, format!("[{name}] $ taskset {}", args.join(" ")));
 
     let mut child = match tokio::process::Command::new("taskset")
         .args(args)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
     {
         Ok(child) => child,
         Err(e) => {
-            log_line(&ui_weak, format!("[{name}] failed to boot: {e}"));
+            log_line(&ui_weak, format!("[{name}] failed to launch: {e}"));
             return;
         }
     };
+
+    if let Some(stdin) = child.stdin.take() {
+        *guard = Some(stdin);
+    }
+
+    // Written while the lock is still held so nothing can slip a command in
+    // ahead of the boot script.
+    if let (Some(code), Some(stdin)) = (init, guard.as_mut()) {
+        log_line(&ui_weak, format!("[{name}] > {code}"));
+        if let Err(e) = stdin.write_all(format!("{code}\n").as_bytes()).await {
+            log_line(&ui_weak, format!("[{name}] boot write failed: {e}"));
+        }
+        let _ = stdin.flush().await;
+    }
+    drop(guard);
 
     if let Some(stdout) = child.stdout.take() {
         let ui_weak = ui_weak.clone();
@@ -107,17 +131,78 @@ async fn boot_scsynth(
 
     tokio::spawn(async move {
         let _ = child.wait().await;
+        *slot.lock().await = None;
+        log_line(&ui_weak, format!("[{name}] exited"));
     });
 }
 
-const ORBITS_BOOT_FILE: &str = "/home/endo/optimize/startup.scd";
+// Same as spawn_proc, plus a guard against an audio server already on that port.
+async fn boot_server(
+    name: &'static str,
+    port: &'static str,
+    args: Vec<&'static str>,
+    init: Option<&'static str>,
+    slot: ProcIn,
+    ui_weak: slint::Weak<AppWindow>,
+) {
+    if is_process_running(port) {
+        log_line(
+            &ui_weak,
+            format!("[{name}] already running on {port}, skipping boot"),
+        );
+        return;
+    }
 
+    log_line(&ui_weak, format!("[{name}] booting on port {port}..."));
+    spawn_proc(name, args, init, slot, ui_weak).await;
+}
+
+// Write one line into a running child's stdin.
+async fn send_line(
+    name: &'static str,
+    slot: ProcIn,
+    ui_weak: slint::Weak<AppWindow>,
+    code: &'static str,
+) {
+    let mut guard = slot.lock().await;
+    let Some(stdin) = guard.as_mut() else {
+        log_line(&ui_weak, format!("[{name}] not running -- boot it first"));
+        return;
+    };
+
+    log_line(&ui_weak, format!("[{name}] > {code}"));
+    if let Err(e) = stdin.write_all(format!("{code}\n").as_bytes()).await {
+        log_line(&ui_weak, format!("[{name}] write failed: {e}"));
+        return;
+    }
+    if let Err(e) = stdin.flush().await {
+        log_line(&ui_weak, format!("[{name}] flush failed: {e}"));
+    }
+}
+
+// The boot file is fed to sclang over stdin rather than passed as an argv file.
+// Given a file argument sclang runs it and then never reads stdin at all (the
+// trailing `-` in `sclang [options] [file..] [-]` does not change this), which
+// would leave no way to talk to the running interpreter afterwards. Sending it
+// as a .load means one channel both boots the engine and takes later commands.
+const ORBITS_BOOT_CMD: &str = "\"/home/endo/Studio/Hub/startup.scd\".load;";
+
+// Ports are held out of the SuperCollider/SuperDirt defaults so a stray sclang
+// can never take a socket this stack depends on. These must stay in sync with
+// Hub/startup.scd and Hub/BootTidal.hs -- see the header comments in both.
+const ORBITS_PORT: &str = "6110"; // scsynth; equals Tidal's oBusPort
+const VOCALS_PORT: &str = "6111"; // second, independent scsynth
+const SCLANG_PORT: &str = "6120"; // sclang langPort; SuperDirt's /n_end responder binds here
+
+// startup.scd sets s.options.device = "orbits", and the direct scsynth boot
+// passes -H orbits, so the JACK client name is the same in both boot paths.
+const ORBITS_JACK_CLIENT: &str = "orbits";
 const ONYX_CLIENT: &str = "Onyx Artist 1-2 Pro";
 
 fn orbits_connect_pairs() -> Vec<(String, String)> {
     (1..=36)
         .map(|i| {
-            let src = format!("SuperCollider:out_{i}");
+            let src = format!("{ORBITS_JACK_CLIENT}:out_{i}");
             let dst = if i % 2 == 1 {
                 format!("{ONYX_CLIENT}:playback_AUX0")
             } else {
@@ -152,14 +237,55 @@ fn connect_orbits(ui_weak: slint::Weak<AppWindow>) {
     log_line(&ui_weak, "[orbits] connect complete".into());
 }
 
+// Direct scsynth boot. These flags are the server's ONLY configuration -- no
+// .scd can change them afterwards -- so they mirror the s.options block in
+// Hub/startup.scd. A client that allocates against larger limits than the
+// server actually has will get "Node/Group/SynthDef not found" back.
 fn orbits_scsynth_args() -> Vec<&'static str> {
     vec![
-        "-c", "4", "chrt", "-f", "80", "pw-jack", "-p", "128", "scsynth", "-u", "57110", "-H",
-        "orbits", "-S", "48000", "-z", "128", "-i", "0", "-o", "36", "-a", "256", "-b", "8192",
-        "-m", "262144", "-L",
+        "-c",
+        "4",
+        "chrt",
+        "-f",
+        "80",
+        "pw-jack",
+        "-p",
+        "128",
+        "scsynth",
+        "-u",
+        ORBITS_PORT,
+        "-H",
+        ORBITS_JACK_CLIENT,
+        "-S",
+        "48000",
+        "-z",
+        "128",
+        "-Z",
+        "128",
+        "-i",
+        "0",
+        "-o",
+        "36",
+        "-a",
+        "1056",
+        "-b",
+        "524288",
+        "-n",
+        "524288",
+        "-w",
+        "256",
+        "-m",
+        "524288",
+        "-l",
+        "3",
+        "-L",
     ]
 }
 
+// sclang boot: sclang spawns scsynth itself using the s.options in the boot
+// file. -u pins the language port, which SuperDirt uses for its /n_end
+// responder -- the only thing that clears its `flotsam` node dictionary.
+// No file argument here on purpose: see ORBITS_BOOT_CMD.
 fn orbits_sclang_args() -> Vec<&'static str> {
     vec![
         "-c",
@@ -171,28 +297,65 @@ fn orbits_sclang_args() -> Vec<&'static str> {
         "-p",
         "128",
         "sclang",
-        ORBITS_BOOT_FILE,
+        "-u",
+        SCLANG_PORT,
     ]
 }
 
 fn vocals_args() -> Vec<&'static str> {
     vec![
-        "-c", "5", "chrt", "-f", "80", "pw-jack", "-p", "64", "scsynth", "-u", "57111", "-H",
-        "vocals", "-S", "48000", "-z", "64", "-i", "2", "-o", "2", "-a", "64", "-m", "65536", "-L",
+        "-c",
+        "5",
+        "chrt",
+        "-f",
+        "80",
+        "pw-jack",
+        "-p",
+        "64",
+        "scsynth",
+        "-u",
+        VOCALS_PORT,
+        "-H",
+        "vocals",
+        "-S",
+        "48000",
+        "-z",
+        "64",
+        "-i",
+        "2",
+        "-o",
+        "2",
+        "-a",
+        "64",
+        "-m",
+        "65536",
+        "-L",
     ]
+}
+
+const TIDAL_BOOT_FILE: &str = "/home/endo/Studio/Hub/BootTidal.hs";
+
+// ghci gets its own core, clear of the audio cores (4 = orbits, 5 = vocals).
+// Deliberately no `chrt -f` here: giving a garbage-collected runtime realtime
+// FIFO priority lets a GC pause starve everything scheduled below it.
+fn tidal_args() -> Vec<&'static str> {
+    vec!["-c", "6", "ghci", "-ghci-script", TIDAL_BOOT_FILE]
 }
 
 #[tokio::main]
 async fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let ui_weak = ui.as_weak();
+    let orbits_in: ProcIn = Arc::new(Mutex::new(None));
+    let vocals_in: ProcIn = Arc::new(Mutex::new(None));
+    let tidal_in: ProcIn = Arc::new(Mutex::new(None));
     // Spawn async telemetry engine checking scsynth status
     {
         let ui_weak = ui_weak.clone();
         tokio::spawn(async move {
             loop {
-                let orbits_running = is_process_running("57110");
-                let vocals_running = is_process_running("57111");
+                let orbits_running = is_process_running(ORBITS_PORT);
+                let vocals_running = is_process_running(VOCALS_PORT);
 
                 let ui_weak = ui_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -223,11 +386,14 @@ async fn main() -> Result<(), slint::PlatformError> {
     // Handle UI interaction callbacks safely
     {
         let ui_weak = ui_weak.clone();
+        let orbits_in = orbits_in.clone();
         ui.on_boot_orbits_scsynth(move || {
-            tokio::spawn(boot_scsynth(
+            tokio::spawn(boot_server(
                 "orbits",
-                "57110",
+                ORBITS_PORT,
                 orbits_scsynth_args(),
+                None,
+                orbits_in.clone(),
                 ui_weak.clone(),
             ));
         });
@@ -235,12 +401,45 @@ async fn main() -> Result<(), slint::PlatformError> {
 
     {
         let ui_weak = ui_weak.clone();
+        let orbits_in = orbits_in.clone();
         ui.on_boot_orbits_sclang(move || {
-            tokio::spawn(boot_scsynth(
+            tokio::spawn(boot_server(
                 "orbits",
-                "57110",
+                ORBITS_PORT,
                 orbits_sclang_args(),
+                Some(ORBITS_BOOT_CMD),
+                orbits_in.clone(),
                 ui_weak.clone(),
+            ));
+        });
+    }
+
+    // Ask sclang what the server's node tree actually looks like. Prints to
+    // sclang's stdout, which lands in this log.
+    {
+        let ui_weak = ui_weak.clone();
+        let orbits_in = orbits_in.clone();
+        ui.on_orbits_dump_tree(move || {
+            tokio::spawn(send_line(
+                "orbits",
+                orbits_in.clone(),
+                ui_weak.clone(),
+                "s.queryAllNodes;",
+            ));
+        });
+    }
+
+    // Re-run the boot-time tree init by hand: creates the default group and
+    // re-runs ServerTree, which is what rebuilds SuperDirt's orbit groups.
+    {
+        let ui_weak = ui_weak.clone();
+        let orbits_in = orbits_in.clone();
+        ui.on_orbits_init_tree(move || {
+            tokio::spawn(send_line(
+                "orbits",
+                orbits_in.clone(),
+                ui_weak.clone(),
+                "s.initTree;",
             ));
         });
     }
@@ -255,12 +454,69 @@ async fn main() -> Result<(), slint::PlatformError> {
 
     {
         let ui_weak = ui_weak.clone();
+        let vocals_in = vocals_in.clone();
         ui.on_boot_vocals(move || {
-            tokio::spawn(boot_scsynth(
+            tokio::spawn(boot_server(
                 "vocals",
-                "57111",
+                VOCALS_PORT,
                 vocals_args(),
+                None,
+                vocals_in.clone(),
                 ui_weak.clone(),
+            ));
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let tidal_in = tidal_in.clone();
+        ui.on_boot_tidal(move || {
+            tokio::spawn(spawn_proc(
+                "tidal",
+                tidal_args(),
+                None,
+                tidal_in.clone(),
+                ui_weak.clone(),
+            ));
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let tidal_in = tidal_in.clone();
+        ui.on_tidal_test_pattern(move || {
+            tokio::spawn(send_line(
+                "tidal",
+                tidal_in.clone(),
+                ui_weak.clone(),
+                r#"d1 $ s "bd*4""#,
+            ));
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let tidal_in = tidal_in.clone();
+        ui.on_tidal_hush(move || {
+            tokio::spawn(send_line(
+                "tidal",
+                tidal_in.clone(),
+                ui_weak.clone(),
+                "hush",
+            ));
+        });
+    }
+
+    {
+        let ui_weak = ui_weak.clone();
+        let tidal_in = tidal_in.clone();
+        ui.on_stop_tidal(move || {
+            // :quit lets ghci shut down cleanly; the wait task clears the handle.
+            tokio::spawn(send_line(
+                "tidal",
+                tidal_in.clone(),
+                ui_weak.clone(),
+                ":quit",
             ));
         });
     }
@@ -270,7 +526,7 @@ async fn main() -> Result<(), slint::PlatformError> {
         ui.on_panic_orbits(move || {
             log_line(
                 &ui_weak,
-                "[orbits] panic triggered: ending port 57110".into(),
+                format!("[orbits] panic triggered: ending port {ORBITS_PORT}"),
             );
             kill_orbits(&ui_weak);
         });
@@ -281,9 +537,9 @@ async fn main() -> Result<(), slint::PlatformError> {
         ui.on_panic_vocals(move || {
             log_line(
                 &ui_weak,
-                "[vocals] panic triggered: ending port 57111".into(),
+                format!("[vocals] panic triggered: ending port {VOCALS_PORT}"),
             );
-            kill_server(&ui_weak, "57111");
+            kill_server(&ui_weak, VOCALS_PORT);
         });
     }
 

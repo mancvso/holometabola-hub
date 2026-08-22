@@ -3,7 +3,7 @@ import { Button, VerticalBox, HorizontalBox, GroupBox } from "std-widgets.slint"
 export component AppWindow inherits Window {
     title: "Live Audio Control Plane";
     width: 500px;
-    height: 420px;
+    height: 860px;
     background: #1e1e24;
 
     in property <string> orbits-status: "Offline";
@@ -19,6 +19,12 @@ export component AppWindow inherits Window {
     callback panic-orbits();
     callback panic-vocals();
     callback force-restart-all();
+    callback orbits-dump-tree();
+    callback orbits-init-tree();
+    callback boot-tidal();
+    callback tidal-test-pattern();
+    callback tidal-hush();
+    callback stop-tidal();
 
     VerticalBox {
         padding: 20px;
@@ -56,6 +62,14 @@ export component AppWindow inherits Window {
                         clicked => { root.connect-orbits(); }
                     }
                     Button {
+                        text: "DUMP TREE";
+                        clicked => { root.orbits-dump-tree(); }
+                    }
+                    Button {
+                        text: "INIT TREE";
+                        clicked => { root.orbits-init-tree(); }
+                    }
+                    Button {
                         text: "PANIC ORBITS";
                         clicked => { root.panic-orbits(); }
                     }
@@ -77,6 +91,35 @@ export component AppWindow inherits Window {
                     Button {
                         text: "PANIC VOCALS";
                         clicked => { root.panic-vocals(); }
+                    }
+                }
+            }
+        }
+
+        GroupBox {
+            title: "Tidal";
+            VerticalBox {
+                spacing: 10px;
+                HorizontalBox {
+                    spacing: 10px;
+                    Button {
+                        text: "BOOT TIDAL";
+                        clicked => { root.boot-tidal(); }
+                    }
+                    Button {
+                        text: "STOP TIDAL";
+                        clicked => { root.stop-tidal(); }
+                    }
+                }
+                HorizontalBox {
+                    spacing: 10px;
+                    Button {
+                        text: "d1 $ s \"b*4\"";
+                        clicked => { root.tidal-test-pattern(); }
+                    }
+                    Button {
+                        text: "HUSH";
+                        clicked => { root.tidal-hush(); }
                     }
                 }
             }
