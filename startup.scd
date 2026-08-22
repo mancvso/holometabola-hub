@@ -15,6 +15,16 @@ below actually applied -- options set inside a reboot callback only take effect
 on the *following* boot, which is what made this file's values look inert.
 */
 (
+// Pin and prioritise scsynth HERE rather than on sclang's own command line.
+// A child inherits CPU affinity and scheduling policy, so pinning sclang put
+// sclang and scsynth on one core at SCHED_FIFO 80 -- and under FIFO an equal
+// priority thread never preempts a running one. While sclang fired ~2500
+// /b_allocRead messages during sample loading, scsynth could not be scheduled
+// to drain its UDP socket, so the kernel silently discarded them, along with
+// initTree's /g_new. Result: sclang believed the buffers and node tree existed
+// while the server had neither, with no error on either side.
+Server.program = "exec taskset -c 4 chrt -f 80 pw-jack -p 128 scsynth";
+
 // The stock `s` / Server.default is hardwired to 127.0.0.1:57110 at class init,
 // so replace the object rather than trying to mutate its address.
 Server.default = Server(\orbits, NetAddr("127.0.0.1", 6110));

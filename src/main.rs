@@ -78,10 +78,15 @@ async fn spawn_proc(
         return;
     }
 
-    log_line(&ui_weak, format!("[{name}] $ taskset {}", args.join(" ")));
+    log_line(&ui_weak, format!("[{name}] $ {}", args.join(" ")));
 
-    let mut child = match tokio::process::Command::new("taskset")
-        .args(args)
+    let Some((program, rest)) = args.split_first() else {
+        log_line(&ui_weak, format!("[{name}] no command given"));
+        return;
+    };
+
+    let mut child = match tokio::process::Command::new(program)
+        .args(rest)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -243,6 +248,7 @@ fn connect_orbits(ui_weak: slint::Weak<AppWindow>) {
 // server actually has will get "Node/Group/SynthDef not found" back.
 fn orbits_scsynth_args() -> Vec<&'static str> {
     vec![
+        "taskset",
         "-c",
         "4",
         "chrt",
@@ -286,24 +292,20 @@ fn orbits_scsynth_args() -> Vec<&'static str> {
 // file. -u pins the language port, which SuperDirt uses for its /n_end
 // responder -- the only thing that clears its `flotsam` node dictionary.
 // No file argument here on purpose: see ORBITS_BOOT_CMD.
+//
+// Deliberately NOT pinned or given realtime priority. A child inherits both,
+// so pinning sclang put sclang and scsynth on one core at SCHED_FIFO 80 --
+// and under FIFO an equal-priority thread never preempts a running one. While
+// sclang blasted ~2500 /b_allocRead messages, scsynth could not be scheduled
+// to drain its UDP socket, so the kernel silently dropped them (and initTree's
+// /g_new with them). startup.scd pins scsynth alone via Server.program.
 fn orbits_sclang_args() -> Vec<&'static str> {
-    vec![
-        "-c",
-        "4",
-        "chrt",
-        "-f",
-        "80",
-        "pw-jack",
-        "-p",
-        "128",
-        "sclang",
-        "-u",
-        SCLANG_PORT,
-    ]
+    vec!["sclang", "-u", SCLANG_PORT]
 }
 
 fn vocals_args() -> Vec<&'static str> {
     vec![
+        "taskset",
         "-c",
         "5",
         "chrt",
@@ -339,7 +341,7 @@ const TIDAL_BOOT_FILE: &str = "/home/endo/Studio/Hub/BootTidal.hs";
 // Deliberately no `chrt -f` here: giving a garbage-collected runtime realtime
 // FIFO priority lets a GC pause starve everything scheduled below it.
 fn tidal_args() -> Vec<&'static str> {
-    vec!["-c", "6", "ghci", "-ghci-script", TIDAL_BOOT_FILE]
+    vec!["taskset", "-c", "6", "ghci", "-ghci-script", TIDAL_BOOT_FILE]
 }
 
 #[tokio::main]
