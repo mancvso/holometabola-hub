@@ -185,6 +185,68 @@ async fn send_line(
     }
 }
 
+// Editor relay. The lite-xl plugin already decomposes a block into `:{`, the
+// block's lines, then `:}` -- one newline-terminated line per write -- and ghci
+// does the multi-line accumulation itself. So this is a pure line relay: it
+// never parses Haskell and never needs to know where a block begins or ends.
+//
+// Loopback only for now. If the app ever moves to the headless box while the
+// editor stays on the laptop, this needs the same treatment as ~hubScsynthBind.
+const EDITOR_PORT: u16 = 6140;
+
+async fn serve_editor(tidal_in: ProcIn, ui_weak: slint::Weak<AppWindow>) {
+    let addr = format!("127.0.0.1:{EDITOR_PORT}");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            log_line(&ui_weak, format!("[edit] cannot bind {addr}: {e}"));
+            return;
+        }
+    };
+    log_line(&ui_weak, format!("[edit] listening on {addr}"));
+
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(e) => {
+                log_line(&ui_weak, format!("[edit] accept failed: {e}"));
+                continue;
+            }
+        };
+        log_line(&ui_weak, format!("[edit] connected: {peer}"));
+
+        let tidal_in = tidal_in.clone();
+        let ui_weak = ui_weak.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stream).lines();
+            let mut count = 0usize;
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        count += 1;
+                        // Logged verbatim by send_line, so an unbalanced `:{`
+                        // from a half-flushed block is visible in the log
+                        // rather than showing up as ghci silently swallowing
+                        // the next block into the previous one.
+                        send_line("tidal", tidal_in.clone(), ui_weak.clone(), line).await;
+                    }
+                    Ok(None) => {
+                        log_line(
+                            &ui_weak,
+                            format!("[edit] {peer} disconnected after {count} lines"),
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        log_line(&ui_weak, format!("[edit] read error from {peer}: {e}"));
+                        break;
+                    }
+                }
+            }
+        });
+    }
+}
+
 // The boot file is fed to sclang over stdin rather than passed as an argv file.
 // Given a file argument sclang runs it and then never reads stdin at all (the
 // trailing `-` in `sclang [options] [file..] [-]` does not change this), which
@@ -262,7 +324,9 @@ fn orbits_scsynth_args() -> Vec<String> {
     // globalEffect busses per orbit, plus headroom. Has to grow with the
     // orbit count rather than sit at a constant.
     let orbits = ORBITS_OUT_CHANNELS / 2;
-    let audio_bus = (ORBITS_OUT_CHANNELS + (orbits * 8) + 128).max(1024).to_string();
+    let audio_bus = (ORBITS_OUT_CHANNELS + (orbits * 8) + 128)
+        .max(1024)
+        .to_string();
 
     owned(&[
         "taskset",
@@ -358,7 +422,14 @@ const TIDAL_BOOT_FILE: &str = "/home/endo/Studio/Hub/BootTidal.hs";
 // Deliberately no `chrt -f` here: giving a garbage-collected runtime realtime
 // FIFO priority lets a GC pause starve everything scheduled below it.
 fn tidal_args() -> Vec<String> {
-    owned(&["taskset", "-c", "6", "ghci", "-ghci-script", TIDAL_BOOT_FILE])
+    owned(&[
+        "taskset",
+        "-c",
+        "6",
+        "ghci",
+        "-ghci-script",
+        TIDAL_BOOT_FILE,
+    ])
 }
 
 #[tokio::main]
@@ -368,6 +439,16 @@ async fn main() -> Result<(), slint::PlatformError> {
     let orbits_in: ProcIn = Arc::new(Mutex::new(None));
     let vocals_in: ProcIn = Arc::new(Mutex::new(None));
     let tidal_in: ProcIn = Arc::new(Mutex::new(None));
+
+    // Editor relay, up for the life of the app -- independent of whether Tidal
+    // is booted, so connecting early just reports "not running" per line
+    // instead of refusing the connection.
+    {
+        let tidal_in = tidal_in.clone();
+        let ui_weak = ui_weak.clone();
+        tokio::spawn(serve_editor(tidal_in, ui_weak));
+    }
+
     // Spawn async telemetry engine checking scsynth status
     {
         let ui_weak = ui_weak.clone();
@@ -508,7 +589,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 "tidal",
                 tidal_in.clone(),
                 ui_weak.clone(),
-                r#"d1 $ s "bd*4""#.to_string(),
+                r#"b2 $ s "bd(3, 4)" "#.to_string(),
             ));
         });
     }

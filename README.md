@@ -37,6 +37,7 @@ stack depends on.
 | 6120 | sclang langPort | `sclang -u 6120` (**command line only**) | — |
 | 6122 | SuperDirt | `~dirt.start` | Tidal's `oPort` |
 | 6130 | Tidal ctrl listener | `cCtrlPort` | external controllers only |
+| 6140 | Hub editor relay | `EDITOR_PORT` in `main.rs` | the lite-xl plugin |
 
 ### How the pieces actually talk
 
@@ -75,6 +76,45 @@ flags are then the server's *only* configuration, so they mirror the `s.options`
 block in `startup.scd`.
 
 ---
+
+## Editor
+
+Hub owns the Tidal process; the editor is a thin client that ships text to it.
+
+Port **6140** takes newline-delimited lines and relays each one verbatim into
+ghci's stdin. It never parses Haskell: the lite-xl plugin already emits `:{`,
+the block's lines, then `:}`, and ghci does the multi-line accumulation itself.
+
+The plugin lives at `~/litexl-tidalcycles` and reaches Hub through `nc`, so it
+needs no luasocket. `ctrl+shift+return` evaluates the selection;
+*Reconnect to Hub* in the context menu reopens the connection after Hub
+restarts.
+
+Quick check without an editor:
+
+```bash
+printf ':{\nd1 $ s "bd*4"\n:}\n' | nc -q1 127.0.0.1 6140
+```
+
+Hub logs every line it receives. That matters because lite-xl's `process:write`
+may not flush: if a block's final `:}` never arrives, ghci stays in multi-line
+mode and silently folds the *next* block into the previous one. An unbalanced
+`:{` in the log is the tell.
+
+### Pattern names
+
+`d1`..`d16` come from `Sound.Tidal.Boot`. On top of those, `BootTidal.hs` defines
+orbit-named aliases matching the groups in `startup.scd`:
+
+| alias | orbits |
+|---|---|
+| `b1`..`b6` | 0–5 (beats) |
+| `l1`..`l6` | 6–11 (leads) |
+| `a1`..`a6` | 12–17 (ambients) |
+
+They bind with `|<`, so the orbit is a default a pattern can still override with
+its own `# orbit n`. Growing to 4 groups of 9 means extending these to match
+`~hubGroups` / `~hubPerGroup`.
 
 ## Scaling: orbits and groups
 
