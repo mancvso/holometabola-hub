@@ -16,6 +16,7 @@ export component AppWindow inherits Window {
     callback boot-orbits-scsynth();
     callback boot-orbits-sclang();
     callback connect-orbits();
+    callback pin-orbits-threads();
     callback boot-vocals();
     callback panic-orbits();
     callback panic-vocals();
@@ -63,6 +64,10 @@ export component AppWindow inherits Window {
                     Button {
                         text: "CONNECT";
                         clicked => { root.connect-orbits(); }
+                    }
+                    Button {
+                        text: "PIN THREADS";
+                        clicked => { root.pin-orbits-threads(); }
                     }
                     Button {
                         text: "DUMP TREE";

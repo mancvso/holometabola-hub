@@ -75,5 +75,11 @@ let b1 pat = p "b1" $ pat |< orbit 0
     a6 pat = p "a6" $ pat |< orbit 17
 :}
 
+:{
+let steel = "0.2 1 1"
+    gain_slide x y z = gain y
+    ray = "<[vt:2 vt:2 vt:2 [vt:2*2] ~ exxo:3 ], vt:3*4, [vt:3 ~ vt:3*2]>"
+:}
+
 :set prompt "tidal> "
 :set prompt-cont ""

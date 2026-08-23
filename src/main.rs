@@ -31,10 +31,15 @@ fn log_line(ui_weak: &slint::Weak<AppWindow>, line: String) {
     });
 }
 
-// Asynchronously inspect active ports via native Linux commands
+// Asynchronously inspect active ports via native Linux commands.
+//
+// The pattern has to tolerate anything between "scsynth" and "-u <port>": the
+// sclang boot path goes through Server.program, which inserts `-B <addr>`
+// there, so a literal "scsynth -u <port>" only ever matched the direct boot
+// and reported CRASHED for a perfectly healthy sclang-booted server.
 fn is_process_running(port: &str) -> bool {
     let output = Command::new("pgrep")
-        .args(["-f", &format!("scsynth -u {}", port)])
+        .args(["-f", &format!("scsynth.*-u {}", port)])
         .output();
 
     if let Ok(out) = output {
@@ -48,6 +53,102 @@ fn kill_server(ui_weak: &slint::Weak<AppWindow>, port: &str) {
     let pattern = format!("scsynth -u {}", port);
     log_line(ui_weak, format!("$ pkill -f \"{pattern}\""));
     let _ = Command::new("pkill").args(["-f", &pattern]).status();
+}
+
+// Per-thread pinning for the orbits server.
+//
+// scsynth renders everything on a single thread -- the PipeWire client
+// callback, named data-loop.0 -- while its OSC receive, NRT command and disk
+// threads wake in bursts whenever Tidal fires a section change. `taskset -c 4`
+// on the process puts all eight on one logical CPU, so those bursts preempt
+// the audio callback: measured at up to 346 involuntary context switches per
+// second during section changes, against 41 on a free-floating server.
+//
+// Splitting them leaves the callback alone on the isolated CPU and moves the
+// rest to its SMT sibling, which isolcpus also holds out of the scheduler.
+// Affinity on our own children needs no privileges -- unlike the SCHED_FIFO
+// lease, which still has to come from outside.
+const ORBITS_DSP_CPU: &str = "4"; // isolated; the audio callback, alone
+const ORBITS_AUX_CPU: &str = "10"; // isolated SMT sibling; every other thread
+const ORBITS_DSP_THREAD: &str = "data-loop.0";
+
+// The sclang boot path goes through Server.program, which inserts `-B <addr>`
+// ahead of `-u <port>`, so a literal "scsynth -u <port>" pattern never matches
+// it. Allow anything between the two.
+fn orbits_scsynth_pid() -> Option<u32> {
+    let out = Command::new("pgrep")
+        .args(["-f", &format!("scsynth.*-u {}", ORBITS_PORT)])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .next()
+        .and_then(|s| s.parse().ok())
+}
+
+fn pin_orbits_threads(ui_weak: slint::Weak<AppWindow>) {
+    let Some(pid) = orbits_scsynth_pid() else {
+        log_line(&ui_weak, "[pin] no orbits scsynth running".into());
+        return;
+    };
+
+    let task_dir = format!("/proc/{pid}/task");
+    let entries = match std::fs::read_dir(&task_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            log_line(&ui_weak, format!("[pin] cannot read {task_dir}: {e}"));
+            return;
+        }
+    };
+
+    let (mut dsp, mut aux, mut failed) = (0u32, 0u32, 0u32);
+    for entry in entries.flatten() {
+        let tid = entry.file_name().to_string_lossy().into_owned();
+        let comm = std::fs::read_to_string(format!("{task_dir}/{tid}/comm")).unwrap_or_default();
+        let comm = comm.trim().to_string();
+        let is_dsp = comm == ORBITS_DSP_THREAD;
+        let cpu = if is_dsp { ORBITS_DSP_CPU } else { ORBITS_AUX_CPU };
+
+        let ok = Command::new("taskset")
+            .args(["-cp", cpu, &tid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if ok {
+            if is_dsp {
+                dsp += 1;
+                log_line(&ui_weak, format!("[pin] {comm} (tid {tid}) -> cpu {cpu}"));
+            } else {
+                aux += 1;
+            }
+        } else {
+            failed += 1;
+        }
+    }
+
+    if dsp == 0 {
+        // No data-loop.0 means scsynth has not attached to PipeWire yet, so
+        // every thread just went to the aux CPU and the DSP core sits empty.
+        log_line(
+            &ui_weak,
+            format!("[pin] WARNING: no {ORBITS_DSP_THREAD} thread -- is the server connected?"),
+        );
+    }
+    log_line(
+        &ui_weak,
+        format!(
+            "[pin] scsynth {pid}: {dsp} dsp on cpu {ORBITS_DSP_CPU}, \
+             {aux} aux on cpu {ORBITS_AUX_CPU}{}",
+            if failed > 0 {
+                format!(", {failed} failed")
+            } else {
+                String::new()
+            }
+        ),
+    );
 }
 
 fn kill_orbits(ui_weak: &slint::Weak<AppWindow>) {
@@ -549,6 +650,16 @@ async fn main() -> Result<(), slint::PlatformError> {
         ui.on_connect_orbits(move || {
             let ui_weak = ui_weak.clone();
             tokio::task::spawn_blocking(move || connect_orbits(ui_weak));
+        });
+    }
+
+    // Press after the server is up and connected: the thread list only settles
+    // once scsynth has attached to PipeWire and spawned data-loop.0.
+    {
+        let ui_weak = ui_weak.clone();
+        ui.on_pin_orbits_threads(move || {
+            let ui_weak = ui_weak.clone();
+            tokio::task::spawn_blocking(move || pin_orbits_threads(ui_weak));
         });
     }
 
