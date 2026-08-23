@@ -61,7 +61,7 @@ silence with a perfectly healthy-looking log on both machines.
 // to drain its UDP socket, so the kernel silently discarded them, along with
 // initTree's /g_new. Result: sclang believed the buffers and node tree existed
 // while the server had neither, with no error on either side.
-Server.program = "exec taskset -c % chrt -f 80 pw-jack -p 128 scsynth -B %"
+Server.program = "exec taskset -c % chrt -f 80 pw-jack -p 512 scsynth -B %"
 	.format(~hubCore, ~hubScsynthBind);
 
 // The stock `s` / Server.default is hardwired to 127.0.0.1:57110 at class init,
@@ -72,8 +72,8 @@ s = Server.default;
 
 s.options.device = "orbits";        // JACK client name -> orbits:out_1 ..
 s.options.sampleRate = ~hubSampleRate;
-s.options.hardwareBufferSize = 128;
-s.options.blockSize = 128;
+s.options.hardwareBufferSize = 512;
+s.options.blockSize = 512;
 s.options.numBuffers = 2048 * 256;  // sample buffers; SuperDirt needs thousands
 s.options.memSize = 8192 * 64;      // realtime memory, KB
 s.options.numWireBufs = 256;        // raise if "exceeded number of interconnect buffers"
