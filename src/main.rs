@@ -10,6 +10,35 @@ slint::include_modules!();
 
 static LATES_COUNT: AtomicU32 = AtomicU32::new(0);
 
+// Wayland identifies a window by its app_id, and the shell matches that against
+// a desktop entry to decide what a taskbar click does. Slint never calls
+// set_app_id, and winit only does so when `platform_specific.name` is set, so
+// by default this window ships with no identity at all: COSMIC cannot pair the
+// taskbar button with the window, and clicking it toggles rather than raises.
+//
+// Must match the basename of packaging/live-audio-control.desktop, which is
+// what the shell looks up to find the icon and name.
+const APP_ID: &str = "live-audio-control";
+
+// Has to run before the first window exists, since the hook is consulted at
+// window construction. A failure here costs only the taskbar behaviour, so it
+// warns rather than aborting the boot.
+fn install_backend() {
+    use i_slint_backend_winit::winit::platform::wayland::WindowAttributesExtWayland;
+
+    match i_slint_backend_winit::Backend::builder()
+        .with_window_attributes_hook(|attrs| attrs.with_name(APP_ID, APP_ID))
+        .build()
+    {
+        Ok(backend) => {
+            if let Err(e) = slint::platform::set_platform(Box::new(backend)) {
+                eprintln!("[ui] could not install winit backend ({e:?}); app_id unset");
+            }
+        }
+        Err(e) => eprintln!("[ui] winit backend build failed ({e}); app_id unset"),
+    }
+}
+
 fn log_line(ui_weak: &slint::Weak<AppWindow>, line: String) {
     println!("{line}");
 
@@ -475,14 +504,26 @@ fn orbits_scsynth_args() -> Vec<String> {
 // responder -- the only thing that clears its `flotsam` node dictionary.
 // No file argument here on purpose: see ORBITS_BOOT_CMD.
 //
-// Deliberately NOT pinned or given realtime priority. A child inherits both,
-// so pinning sclang put sclang and scsynth on one core at SCHED_FIFO 80 --
-// and under FIFO an equal-priority thread never preempts a running one. While
-// sclang blasted ~2500 /b_allocRead messages, scsynth could not be scheduled
-// to drain its UDP socket, so the kernel silently dropped them (and initTree's
-// /g_new with them). startup.scd pins scsynth alone via Server.program.
+// Realtime, but deliberately BELOW scsynth, and deliberately NOT pinned.
+//
+// The original incident this guards against: pinning sclang put sclang and
+// scsynth on one core at SCHED_FIFO 80, and under FIFO an equal-priority
+// thread never preempts a running one. While sclang blasted ~2500
+// /b_allocRead messages, scsynth could not be scheduled to drain its UDP
+// socket, so the kernel silently dropped them (and initTree's /g_new with
+// them). Both halves of that fix still hold: no affinity mask here, and a
+// priority strictly under the server's, so scsynth can always preempt sclang
+// no matter which housekeeping core sclang lands on.
+//
+// chrt needs no privileges -- the user is in @audio, which grants rtprio 95
+// via /etc/security/limits.d/audio.conf. It only *persists* once sclang is in
+// system76-scheduler's exceptions list: its 60s refresh resets SCHED_FIFO to
+// SCHED_OTHER on any process it manages. See
+// packaging/system76-scheduler-config.kdl.
+const SCLANG_RT_PRIO: &str = "73"; // must stay below scsynth's 80
+
 fn orbits_sclang_args() -> Vec<String> {
-    owned(&["sclang", "-u", SCLANG_PORT])
+    owned(&["chrt", "-f", SCLANG_RT_PRIO, "sclang", "-u", SCLANG_PORT])
 }
 
 fn vocals_args() -> Vec<String> {
@@ -535,6 +576,7 @@ fn tidal_args() -> Vec<String> {
 
 #[tokio::main]
 async fn main() -> Result<(), slint::PlatformError> {
+    install_backend();
     let ui = AppWindow::new()?;
     let ui_weak = ui.as_weak();
     let orbits_in: ProcIn = Arc::new(Mutex::new(None));

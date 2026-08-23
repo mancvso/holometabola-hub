@@ -1,0 +1,48 @@
+// Install to /etc/system76-scheduler/config.kdl
+//
+//   sudo install -Dm644 packaging/system76-scheduler-config.kdl \
+//        /etc/system76-scheduler/config.kdl
+//   sudo systemctl restart com.system76.Scheduler
+//
+// The stock config at /usr/share/system76-scheduler/config.kdl is overwritten
+// on upgrade, which is why this lives here instead.
+//
+// Why: the audio chain sets its own SCHED_FIFO (the user is in @audio with
+// rtprio 95, so no privilege is needed) and pins its own affinity. Anything
+// system76-scheduler decides about these processes can only fight that. The
+// exceptions list tells it to leave them alone entirely.
+//
+// The `descends=` entries in the stock config do NOT cover this chain. The
+// launcher runs `exec taskset ... chrt ... scsynth`, and exec replaces the
+// process image rather than forking, so taskset and chrt never become parents
+// and there is no ancestry to descend from. Matching has to be by name.
+
+version "2.0"
+
+process-scheduler enable=true {
+    exceptions {
+        // Stock entries, repeated because this block replaces rather than
+        // extends the one in /usr/share.
+        include descends="chrt"
+        include descends="gamemoderun"
+        include descends="ionice"
+        include descends="nice"
+        include descends="taskset"
+        include descends="schedtool"
+        chrt
+        dbus
+        dbus-broker
+        gamemoderun
+        ionice
+        nice
+        rtkit-daemon
+        systemd
+        taskset
+        schedtool
+
+        // The Hub audio chain.
+        scsynth
+        supernova
+        sclang
+    }
+}

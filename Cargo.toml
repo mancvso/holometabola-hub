@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 slint = "1.7"
+# Pulled in directly only to reach Backend::builder(), so the Wayland app_id
+# can be set -- see APP_ID in src/main.rs. Must track the resolved slint version.
+i-slint-backend-winit = "1.17"
 tokio = { version = "1.35", features = ["full"] }
 
 [build-dependencies]
