@@ -1,0 +1,187 @@
+import { Button, VerticalBox, HorizontalBox, GroupBox, LineEdit } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    title: "Live Audio Control Plane";
+    width: 500px;
+    height: 1000px;
+    background: #1e1e24;
+
+    in property <string> orbits-status: "Offline";
+    in property <string> vocals-status: "Offline";
+    in property <color> orbits-color: #ff5555;
+    in property <color> vocals-color: #ff5555;
+    in property <int> lates-count: 0;
+    in-out property <string> session-name: "session";
+
+    callback boot-orbits-scsynth();
+    callback boot-orbits-sclang();
+    callback connect-orbits();
+    callback pin-orbits-threads();
+    callback boot-vocals();
+    callback panic-orbits();
+    callback panic-vocals();
+    callback force-restart-all();
+    callback orbits-dump-tree();
+    callback orbits-init-tree();
+    callback boot-tidal();
+    callback tidal-test-pattern();
+    callback tidal-hush();
+    callback stop-tidal();
+    callback rec-start();
+    callback rec-stop();
+
+    VerticalBox {
+        padding: 20px;
+        spacing: 15px;
+
+        Text {
+            text: "SYSTEM CONTROLLER";
+            font-size: 20px;
+            font-weight: 700;
+            color: #ffffff;
+            horizontal-alignment: center;
+        }
+
+        HorizontalBox {
+            spacing: 20px;
+
+            GroupBox {
+                title: "Orbits";
+                VerticalBox {
+                    spacing: 10px;
+                    HorizontalBox {
+                        Text { text: "Status: "; color: #aaaaaa; }
+                        Text { text: root.orbits-status; color: root.orbits-color; font-weight: 700; }
+                    }
+                    Button {
+                        text: "BOOT SCSYNTH";
+                        clicked => { root.boot-orbits-scsynth(); }
+                    }
+                    Button {
+                        text: "BOOT SCLANG";
+                        clicked => { root.boot-orbits-sclang(); }
+                    }
+                    Button {
+                        text: "CONNECT";
+                        clicked => { root.connect-orbits(); }
+                    }
+                    Button {
+                        text: "PIN THREADS";
+                        clicked => { root.pin-orbits-threads(); }
+                    }
+                    Button {
+                        text: "DUMP TREE";
+                        clicked => { root.orbits-dump-tree(); }
+                    }
+                    Button {
+                        text: "INIT TREE";
+                        clicked => { root.orbits-init-tree(); }
+                    }
+                    Button {
+                        text: "PANIC ORBITS";
+                        clicked => { root.panic-orbits(); }
+                    }
+                }
+            }
+
+            GroupBox {
+                title: "Vocals";
+                VerticalBox {
+                    spacing: 10px;
+                    HorizontalBox {
+                        Text { text: "Status: "; color: #aaaaaa; }
+                        Text { text: root.vocals-status; color: root.vocals-color; font-weight: 700; }
+                    }
+                    Button {
+                        text: "BOOT SERVER";
+                        clicked => { root.boot-vocals(); }
+                    }
+                    Button {
+                        text: "PANIC VOCALS";
+                        clicked => { root.panic-vocals(); }
+                    }
+                }
+            }
+        }
+
+        GroupBox {
+            title: "Tidal";
+            VerticalBox {
+                spacing: 10px;
+                HorizontalBox {
+                    spacing: 10px;
+                    Button {
+                        text: "BOOT TIDAL";
+                        clicked => { root.boot-tidal(); }
+                    }
+                    Button {
+                        text: "STOP TIDAL";
+                        clicked => { root.stop-tidal(); }
+                    }
+                }
+                HorizontalBox {
+                    spacing: 10px;
+                    Button {
+                        text: "d1 $ s \"b*4\"";
+                        clicked => { root.tidal-test-pattern(); }
+                    }
+                    Button {
+                        text: "HUSH";
+                        clicked => { root.tidal-hush(); }
+                    }
+                }
+            }
+        }
+
+        GroupBox {
+            title: "Recording";
+            VerticalBox {
+                spacing: 10px;
+                HorizontalBox {
+                    spacing: 10px;
+                    Text {
+                        text: "Session: ";
+                        color: #aaaaaa;
+                        vertical-alignment: center;
+                    }
+                    LineEdit {
+                        text <=> root.session-name;
+                        placeholder-text: "session or song name";
+                    }
+                }
+                HorizontalBox {
+                    spacing: 10px;
+                    Button {
+                        text: "REC START";
+                        clicked => { root.rec-start(); }
+                    }
+                    Button {
+                        text: "REC STOP";
+                        clicked => { root.rec-stop(); }
+                    }
+                }
+                Text {
+                    text: "18 stems -> Hub/recordings/<session>_<timestamp>/";
+                    color: #888888;
+                    font-size: 10px;
+                }
+            }
+        }
+
+        VerticalBox {
+            alignment: end;
+            Button {
+                text: "Force Restart All Servers";
+                clicked => { root.force-restart-all(); }
+            }
+        }
+
+        HorizontalBox {
+            Text {
+                text: "Lates: " + root.lates-count;
+                color: #ffaa33;
+                font-weight: 700;
+            }
+        }
+    }
+}

@@ -136,7 +136,11 @@ fn pin_orbits_threads(ui_weak: slint::Weak<AppWindow>) {
         let comm = std::fs::read_to_string(format!("{task_dir}/{tid}/comm")).unwrap_or_default();
         let comm = comm.trim().to_string();
         let is_dsp = comm == ORBITS_DSP_THREAD;
-        let cpu = if is_dsp { ORBITS_DSP_CPU } else { ORBITS_AUX_CPU };
+        let cpu = if is_dsp {
+            ORBITS_DSP_CPU
+        } else {
+            ORBITS_AUX_CPU
+        };
 
         let ok = Command::new("taskset")
             .args(["-cp", cpu, &tid])
@@ -724,6 +728,13 @@ async fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui_weak.clone();
         let tidal_in = tidal_in.clone();
         ui.on_boot_tidal(move || {
+            let ui_weak_inner = ui_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak_inner.upgrade() {
+                    ui.set_tidal_status("ONLINE".into());
+                    ui.set_tidal_color(Color::from_rgb_u8(85, 255, 85)); // Green
+                }
+            });
             tokio::spawn(spawn_proc(
                 "tidal",
                 tidal_args(),
@@ -764,6 +775,13 @@ async fn main() -> Result<(), slint::PlatformError> {
         let ui_weak = ui_weak.clone();
         let tidal_in = tidal_in.clone();
         ui.on_stop_tidal(move || {
+            let ui_weak_inner = ui_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak_inner.upgrade() {
+                    ui.set_tidal_status("OFFLINE".into());
+                    ui.set_tidal_color(Color::from_rgb_u8(255, 85, 85)); // Red
+                }
+            });
             // :quit lets ghci shut down cleanly; the wait task clears the handle.
             tokio::spawn(send_line(
                 "tidal",

@@ -1,18 +1,138 @@
 import { Button, VerticalBox, HorizontalBox, GroupBox, LineEdit } from "std-widgets.slint";
 
+// ─────────────────────────────────────────────────────────────
+// Custom button with strong visual identity
+// ─────────────────────────────────────────────────────────────
+component ArtButton inherits Rectangle {
+    in property <string> label;
+    in property <color> accent: #00e5ff;
+    in property <bool> danger: false;
+    callback clicked();
+
+    preferred-width: 150px;
+    preferred-height: 34px;
+    border-width: 1px;
+    border-color: root.accent;
+    background: touch.pressed ? root.accent
+             : touch.has-hover ? root.accent
+             : #13131a;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.label;
+        // FIX: Text must be dark when background is bright (pressed or hovered)
+        color: (touch.pressed || touch.has-hover) ? #0a0a10 : root.accent;
+        font-size: 11px;
+        font-weight: 700;
+        font-family: "JetBrains Mono, Consolas, monospace";
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        letter-spacing: 1.5px;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Panel wrapper (replaces GroupBox with custom styling)
+// ─────────────────────────────────────────────────────────────
+component Panel inherits Rectangle {
+    in property <string> title;
+    in property <color> accent: #00e5ff;
+
+    background: #13131a;
+    border-width: 1px;
+    border-color: root.accent;
+
+    VerticalBox {
+        padding: 12px;
+        spacing: 10px;
+
+        // Title bar
+        Rectangle {
+            height: 22px;
+            background: root.accent;
+            HorizontalBox {
+                padding-left: 10px;
+                padding-right: 10px;
+                Text {
+                    text: root.title;
+                    // FIX: Dark text on bright accent background
+                    color: #0a0a10;
+                    font-size: 11px;
+                    font-weight: 700;
+                    font-family: "JetBrains Mono, Consolas, monospace";
+                    letter-spacing: 3px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Content
+        @children
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Status indicator (colored dot + label)
+// ─────────────────────────────────────────────────────────────
+component StatusLine inherits HorizontalBox {
+    in property <string> label;
+    in property <string> value;
+    in property <color> color: #00ff88;
+
+    spacing: 8px;
+    Rectangle {
+        width: 8px; height: 8px;
+        border-radius: 4px;
+        background: root.color;
+    }
+    Text {
+        text: root.label;
+        color: #6a6a78;
+        font-size: 10px;
+        font-family: "JetBrains Mono, Consolas, monospace";
+        letter-spacing: 1px;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.value;
+        color: root.color;
+        font-size: 11px;
+        font-weight: 700;
+        font-family: "JetBrains Mono, Consolas, monospace";
+        vertical-alignment: center;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Main window
+// ─────────────────────────────────────────────────────────────
 export component AppWindow inherits Window {
     title: "Live Audio Control Plane";
-    width: 500px;
-    height: 1000px;
-    background: #1e1e24;
+    preferred-width: 1400px;
+    preferred-height: 750px;
+    min-width: 1100px;
+    min-height: 600px;
+    background: #0a0a10;
 
+    // ── Properties ────────────────────────────────────────────
     in property <string> orbits-status: "Offline";
     in property <string> vocals-status: "Offline";
-    in property <color> orbits-color: #ff5555;
-    in property <color> vocals-color: #ff5555;
+    in property <string> tidal-status: "Offline";
+    in property <color> orbits-color: #ff3355;
+    in property <color> vocals-color: #ff3355;
+    in property <color> tidal-color: #ff3355;
     in property <int> lates-count: 0;
+    in property <string> uptime: "00:00:00";
+    in property <string> output-device: "default";
+    in property <string> orbits-boot-script: "—";
+    in property <string> vocals-boot-script: "—";
+    in property <string> tidal-boot-script: "—";
     in-out property <string> session-name: "session";
 
+    // ── Callbacks ─────────────────────────────────────────────
     callback boot-orbits-scsynth();
     callback boot-orbits-sclang();
     callback connect-orbits();
@@ -30,157 +150,300 @@ export component AppWindow inherits Window {
     callback rec-start();
     callback rec-stop();
 
+    // ── Layout ────────────────────────────────────────────────
     VerticalBox {
-        padding: 20px;
-        spacing: 15px;
+        padding: 12px;
+        spacing: 12px;
 
-        Text {
-            text: "SYSTEM CONTROLLER";
-            font-size: 20px;
-            font-weight: 700;
-            color: #ffffff;
-            horizontal-alignment: center;
-        }
+        // ─── HEADER ──────────────────────────────────────────
+        Rectangle {
+            height: 48px;
+            background: #13131a;
+            border-width: 1px;
+            border-color: #2a2a38;
 
-        HorizontalBox {
-            spacing: 20px;
+            HorizontalBox {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 24px;
 
-            GroupBox {
-                title: "Orbits";
-                VerticalBox {
-                    spacing: 10px;
-                    HorizontalBox {
-                        Text { text: "Status: "; color: #aaaaaa; }
-                        Text { text: root.orbits-status; color: root.orbits-color; font-weight: 700; }
-                    }
-                    Button {
-                        text: "BOOT SCSYNTH";
-                        clicked => { root.boot-orbits-scsynth(); }
-                    }
-                    Button {
-                        text: "BOOT SCLANG";
-                        clicked => { root.boot-orbits-sclang(); }
-                    }
-                    Button {
-                        text: "CONNECT";
-                        clicked => { root.connect-orbits(); }
-                    }
-                    Button {
-                        text: "PIN THREADS";
-                        clicked => { root.pin-orbits-threads(); }
-                    }
-                    Button {
-                        text: "DUMP TREE";
-                        clicked => { root.orbits-dump-tree(); }
-                    }
-                    Button {
-                        text: "INIT TREE";
-                        clicked => { root.orbits-init-tree(); }
-                    }
-                    Button {
-                        text: "PANIC ORBITS";
-                        clicked => { root.panic-orbits(); }
-                    }
+                // Title
+                Text {
+                    text: "◆ LIVE AUDIO CONTROL PLANE";
+                    color: #d8d8e0;
+                    font-size: 14px;
+                    font-weight: 700;
+                    font-family: "JetBrains Mono, Consolas, monospace";
+                    letter-spacing: 2px;
+                    vertical-alignment: center;
                 }
-            }
 
-            GroupBox {
-                title: "Vocals";
-                VerticalBox {
-                    spacing: 10px;
-                    HorizontalBox {
-                        Text { text: "Status: "; color: #aaaaaa; }
-                        Text { text: root.vocals-status; color: root.vocals-color; font-weight: 700; }
-                    }
-                    Button {
-                        text: "BOOT SERVER";
-                        clicked => { root.boot-vocals(); }
-                    }
-                    Button {
-                        text: "PANIC VOCALS";
-                        clicked => { root.panic-vocals(); }
-                    }
-                }
-            }
-        }
+                // Spacer
+                Rectangle { horizontal-stretch: 1; }
 
-        GroupBox {
-            title: "Tidal";
-            VerticalBox {
-                spacing: 10px;
+                // Session
                 HorizontalBox {
-                    spacing: 10px;
-                    Button {
-                        text: "BOOT TIDAL";
-                        clicked => { root.boot-tidal(); }
-                    }
-                    Button {
-                        text: "STOP TIDAL";
-                        clicked => { root.stop-tidal(); }
-                    }
-                }
-                HorizontalBox {
-                    spacing: 10px;
-                    Button {
-                        text: "d1 $ s \"b*4\"";
-                        clicked => { root.tidal-test-pattern(); }
-                    }
-                    Button {
-                        text: "HUSH";
-                        clicked => { root.tidal-hush(); }
-                    }
-                }
-            }
-        }
-
-        GroupBox {
-            title: "Recording";
-            VerticalBox {
-                spacing: 10px;
-                HorizontalBox {
-                    spacing: 10px;
+                    spacing: 8px;
                     Text {
-                        text: "Session: ";
-                        color: #aaaaaa;
+                        text: "SESSION";
+                        color: #6a6a78;
+                        font-size: 10px;
+                        font-family: "JetBrains Mono, Consolas, monospace";
+                        letter-spacing: 2px;
                         vertical-alignment: center;
                     }
                     LineEdit {
+                        preferred-width: 160px;
                         text <=> root.session-name;
-                        placeholder-text: "session or song name";
+                        placeholder-text: "session name";
                     }
                 }
-                HorizontalBox {
-                    spacing: 10px;
-                    Button {
-                        text: "REC START";
-                        clicked => { root.rec-start(); }
+
+                // Lates
+                Rectangle {
+                    width: 90px;
+                    background: #ffaa33;
+                    border-width: 1px;
+                    border-color: #ffaa33;
+                    HorizontalBox {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        Text {
+                            text: "LATES " + root.lates-count;
+                            color: #ffaa33;
+                            font-size: 11px;
+                            font-weight: 700;
+                            font-family: "JetBrains Mono, Consolas, monospace";
+                            letter-spacing: 1px;
+                            vertical-alignment: center;
+                        }
                     }
-                    Button {
-                        text: "REC STOP";
-                        clicked => { root.rec-stop(); }
-                    }
-                }
-                Text {
-                    text: "18 stems -> Hub/recordings/<session>_<timestamp>/";
-                    color: #888888;
-                    font-size: 10px;
                 }
             }
         }
 
-        VerticalBox {
-            alignment: end;
-            Button {
-                text: "Force Restart All Servers";
-                clicked => { root.force-restart-all(); }
-            }
-        }
-
+        // ─── MAIN AREA ───────────────────────────────────────
         HorizontalBox {
-            Text {
-                text: "Lates: " + root.lates-count;
-                color: #ffaa33;
-                font-weight: 700;
+            spacing: 12px;
+            horizontal-stretch: 1;
+
+            // ─── LEFT: CONTROL PANELS (60%) ──────────────────
+            Rectangle {
+                horizontal-stretch: 6;
+                background: transparent;
+
+                GridLayout {
+                    spacing: 12px;
+
+                    // Row 0: Orbits + Tidal
+                    Panel {
+                        title: "ORBITS";
+                        accent: #00e5ff;
+                        row: 0;
+                        //column: 0;
+                        VerticalBox {
+                            spacing: 8px;
+                            StatusLine { label: "STATUS"; value: root.orbits-status; color: root.orbits-color; }
+                            StatusLine { label: "SCRIPT"; value: root.orbits-boot-script; color: #8888a0; }
+                            HorizontalBox {
+                                spacing: 6px;
+                                ArtButton { label: "SCSYNTH"; accent: #00e5ff; clicked => { root.boot-orbits-scsynth(); } }
+                                ArtButton { label: "SCLANG"; accent: #00e5ff; clicked => { root.boot-orbits-sclang(); } }
+                            }
+                            HorizontalBox {
+                                spacing: 6px;
+                                ArtButton { label: "CONNECT"; accent: #00e5ff; clicked => { root.connect-orbits(); } }
+                                ArtButton { label: "PIN CPU"; accent: #00e5ff; clicked => { root.pin-orbits-threads(); } }
+                            }
+                            HorizontalBox {
+                                spacing: 6px;
+                                ArtButton { label: "DUMP TREE"; accent: #00e5ff; clicked => { root.orbits-dump-tree(); } }
+                                ArtButton { label: "INIT TREE"; accent: #00e5ff; clicked => { root.orbits-init-tree(); } }
+                            }
+                            ArtButton { label: "⚠ PANIC"; accent: #ff3355; danger: true; clicked => { root.panic-orbits(); } }
+                        }
+                    }
+
+                    Panel {
+                        title: "TIDAL";
+                        accent: #ff2d95;
+                        row: 0; col: 1;
+                        VerticalBox {
+                            spacing: 8px;
+                            StatusLine { label: "STATUS"; value: root.tidal-status; color: root.tidal-color; }
+                            StatusLine { label: "SCRIPT"; value: root.tidal-boot-script; color: #8888a0; }
+                            HorizontalBox {
+                                spacing: 6px;
+                                ArtButton { label: "BOOT TIDAL"; accent: #ff2d95; clicked => { root.boot-tidal(); } }
+                                ArtButton { label: "STOP TIDAL"; accent: #ff2d95; clicked => { root.stop-tidal(); } }
+                            }
+                            HorizontalBox {
+                                spacing: 6px;
+                                ArtButton { label: "TEST d1"; accent: #ff2d95; clicked => { root.tidal-test-pattern(); } }
+                                ArtButton { label: "HUSH"; accent: #ff2d95; clicked => { root.tidal-hush(); } }
+                            }
+                        }
+                    }
+
+                    // Row 1: Vocals + Recording
+                    Panel {
+                        title: "VOCALS";
+                        accent: #ffb000;
+                        row: 1; col: 0;
+                        VerticalBox {
+                            spacing: 8px;
+                            StatusLine { label: "STATUS"; value: root.vocals-status; color: root.vocals-color; }
+                            StatusLine { label: "SCRIPT"; value: root.vocals-boot-script; color: #8888a0; }
+                            HorizontalBox {
+                                spacing: 6px;
+                                ArtButton { label: "BOOT SERVER"; accent: #ffb000; clicked => { root.boot-vocals(); } }
+                                ArtButton { label: "⚠ PANIC"; accent: #ff3355; danger: true; clicked => { root.panic-vocals(); } }
+                            }
+                        }
+                    }
+
+                    Panel {
+                        title: "RECORDING";
+                        accent: #00ff88;
+                        row: 1; //column: 1;
+                        col: 1;
+                        VerticalBox {
+                            spacing: 8px;
+                            Text {
+                                text: "→ Hub/recordings/" + root.session-name + "_<ts>/";
+                                color: #6a6a78;
+                                font-size: 10px;
+                                font-family: "JetBrains Mono, Consolas, monospace";
+                            }
+                            Text {
+                                text: "18 stems · multichannel";
+                                color: #6a6a78;
+                                font-size: 10px;
+                                font-family: "JetBrains Mono, Consolas, monospace";
+                            }
+                            HorizontalBox {
+                                spacing: 6px;
+                                ArtButton { label: "● REC START"; accent: #ff3355; clicked => { root.rec-start(); } }
+                                ArtButton { label: "■ REC STOP"; accent: #00ff88; clicked => { root.rec-stop(); } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ─── RIGHT: ART CANVAS (40%) ─────────────────────
+            Rectangle {
+                //id: art-canvas;
+                horizontal-stretch: 4;
+                background: #0a0a10;
+                border-width: 1px;
+                border-color: #2a2a38;
+
+                // Placeholder — replace this Rectangle's contents with your custom graphics
+                VerticalBox {
+                    alignment: center;
+                    spacing: 12px;
+                    Text {
+                        text: "◆";
+                        color: #2a2a38;
+                        font-size: 48px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "ART CANVAS";
+                        color: #2a2a38;
+                        font-size: 12px;
+                        font-weight: 700;
+                        font-family: "JetBrains Mono, Consolas, monospace";
+                        letter-spacing: 4px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "replace this area with your visuals";
+                        color: #2a2a38;
+                        font-size: 10px;
+                        font-family: "JetBrains Mono, Consolas, monospace";
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // ─── FOOTER ──────────────────────────────────────────
+        Rectangle {
+            height: 40px;
+            background: #13131a;
+            border-width: 1px;
+            border-color: #2a2a38;
+
+            HorizontalBox {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 20px;
+
+                ArtButton {
+                    label: "⟳ FORCE RESTART ALL";
+                    accent: #ff3355;
+                    preferred-width: 200px;
+                    clicked => { root.force-restart-all(); }
+                }
+
+                Rectangle { width: 1px; background: #2a2a38; }
+
+                // Uptime
+                HorizontalBox {
+                    spacing: 8px;
+                    Text {
+                        text: "UPTIME";
+                        color: #6a6a78;
+                        font-size: 10px;
+                        font-family: "JetBrains Mono, Consolas, monospace";
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.uptime;
+                        color: #d8d8e0;
+                        font-size: 12px;
+                        font-weight: 700;
+                        font-family: "JetBrains Mono, Consolas, monospace";
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle { width: 1px; background: #2a2a38; }
+
+                // Output device
+                HorizontalBox {
+                    spacing: 8px;
+                    Text {
+                        text: "OUTPUT";
+                        color: #6a6a78;
+                        font-size: 10px;
+                        font-family: "JetBrains Mono, Consolas, monospace";
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.output-device;
+                        color: #00e5ff;
+                        font-size: 12px;
+                        font-weight: 700;
+                        font-family: "JetBrains Mono, Consolas, monospace";
+                        vertical-alignment: center;
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Text {
+                    text: "v1.0 · TIDAL / SC / SCLANG";
+                    color: #2a2a38;
+                    font-size: 10px;
+                    font-family: "JetBrains Mono, Consolas, monospace";
+                    letter-spacing: 1px;
+                    vertical-alignment: center;
+                }
             }
         }
     }

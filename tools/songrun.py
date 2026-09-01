@@ -209,7 +209,7 @@ def main():
     ap.add_argument("--ghci-pid", type=int, help="target ghci (auto-detected if omitted)")
     ap.add_argument("--port", type=int, default=6110, help="scsynth OSC port")
     ap.add_argument("--node", default="orbits", help="pipewire node name")
-    ap.add_argument("--dwell", type=float, default=70.0, help="seconds per section")
+    ap.add_argument("--dwell", type=float, default=30.0, help="seconds per section")
     ap.add_argument("--lead", type=float, default=6.0, help="idle seconds before section 1")
     ap.add_argument("--tail", type=float, default=25.0, help="seconds to record after hush")
     ap.add_argument("--out", help="output prefix (default: runs/<songname>)")

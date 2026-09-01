@@ -79,6 +79,7 @@ let b1 pat = p "b1" $ pat |< orbit 0
 let steel = "0.2 1 1"
     gain_slide x y z = gain y
     ray = "<[vt:2 vt:2 vt:2 [vt:2*2] ~ exxo:3 ], vt:3*4, [vt:3 ~ vt:3*2]>"
+    unlayer = layer[density 0.125 . (#freq 100) . (#hcutoff 600), density 0.125 . every 2 (density 0.25). (# freq 210) . (#hcutoff 9000), density 0.125 . struct "~ [[1 0 0 1] [1 0 0 1]] [1 [1 0]] 0" . (# freq 4000)]
 :}
 
 :set prompt "tidal> "
