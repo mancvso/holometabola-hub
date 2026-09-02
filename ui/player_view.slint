@@ -1,0 +1,295 @@
+import { ScrollView, Button, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+// Data structures representing the JSON layout
+export struct SectionData {
+    name: string,
+    start_time: float, // in seconds
+    duration: float,   // in seconds
+    is_active: bool,
+}
+
+export struct TrackData {
+    name: string,
+    is_soloed: bool,
+    is_muted: bool,
+    sections: [SectionData],
+}
+
+export struct GroupData {
+    name: string,
+    tracks: [TrackData],
+}
+
+component TrackHeader inherits Rectangle {
+    in property <string> track_name : "Track";
+    in property <bool> is_soloed: false;
+    in property <bool> is_muted: false;
+
+    width: 200px;
+    height: 40px;
+    background: #2a2a2a;
+    border-width: 1px;
+    border-color: #1a1a1a;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 5px;
+        alignment: space-between;
+
+        Text {
+            text: root.track_name;
+            color: #ffffff;
+            vertical-alignment: center;
+            font-size: 13px;
+        }
+
+        HorizontalLayout {
+            spacing: 4px;
+            alignment: center;
+
+            // Solo indicator
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                background: root.is_soloed ? #edf01b : #3a3a3a;
+                border-radius: 3px;
+                Text {
+                    text: "S";
+                    color: root.is_soloed ? #000000 : #888888;
+                    font-size: 11px;
+                    font-weight: 700;
+                }
+            }
+
+            // Mute indicator
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                background: root.is_muted ? #e53935 : #3a3a3a;
+                border-radius: 3px;
+                Text {
+                    text: "M";
+                    color: root.is_muted ? #ffffff : #888888;
+                    font-size: 11px;
+                    font-weight: 700;
+                }
+            }
+        }
+    }
+}
+
+component SectionWidget inherits Rectangle {
+    in property <string> name: "Section";
+    in property <bool> is_active : true;
+    in property <color> base_color: Colors.aliceblue;
+
+    // Visual state depends on whether the section is active
+    background: root.is_active ? root.base_color : root.base_color.darker(60%);
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.is_active ? root.base_color.brighter(30%) : root.base_color.darker(40%);
+    opacity: root.is_active ? 1.0 : 0.4;
+
+    Text {
+        text: root.name;
+        color: root.is_active ? #ffffff : #aaaaaa;
+        font-size: 11px;
+        x: 5px;
+        vertical-alignment: center;
+    }
+}
+
+export component DawTimelineView inherits Window {
+    title: "DAW Timeline Viewer";
+    width: 1024px;
+    height: 768px;
+    background: #121212;
+
+    // Configurable visual properties
+    in property <color> accent_color: #3f51b5; // Base accent color (Indigo)
+    in property <float> time_scale: 15.0;     // Pixels per second
+    full-screen: false;
+    in property <[GroupData]> groups: [ {
+        tracks: [{
+            name: "B2",
+            is_muted: false,
+            is_soloed: true,
+            sections: [{
+                name: "Section 1",
+                start_time: 0,
+                duration: 15,
+                is_active: true
+            },{
+                name: "Section 2",
+                start_time: 20,
+                duration: 30,
+                is_active: false
+            },{
+                name: "Section 3",
+                start_time: 50,
+                duration: 45,
+                is_active: true
+            }]
+        },{
+            name: "B1",
+            is_muted: true,
+            is_soloed: false,
+            sections: [{
+                name: "Section B1.1",
+                start_time: 30,
+                duration: 10,
+                is_active: true
+            },{
+                name: "Section B2.2",
+                start_time: 120,
+                duration: 10,
+                is_active: true
+            },{
+                name: "Section B3.3",
+                start_time: 130,
+                duration: 45,
+                is_active: true
+            }]
+        }],
+        name: "Group Beats"
+    },{
+        tracks: [{
+            name: "B2",
+            is_muted: false,
+            is_soloed: true,
+            sections: [{
+                name: "Section 1",
+                start_time: 0,
+                duration: 15,
+                is_active: true
+            },{
+                name: "Section 2",
+                start_time: 20,
+                duration: 30,
+                is_active: false
+            },{
+                name: "Section 3",
+                start_time: 50,
+                duration: 45,
+                is_active: true
+            }]
+        },{
+            name: "B1",
+            is_muted: true,
+            is_soloed: false,
+            sections: [{
+                name: "Section B1.1",
+                start_time: 0,
+                duration: 10,
+                is_active: true
+            },{
+                name: "Section B2.2",
+                start_time: 10,
+                duration: 10,
+                is_active: true
+            },{
+                name: "Section L3.3",
+                start_time: 600,
+                duration: 30,
+                is_active: true
+            }]
+        }],
+        name: "Group leads"
+    } ];          // Injected JSON structure mapping
+
+        // Scrollable Tracks Area
+        ScrollView {
+            viewport-width: 12000px;
+
+            VerticalBox {
+                alignment: start;
+                spacing: 15px;
+                padding: 10px;
+
+                VerticalLayout {
+                    // Top Timeline Ruler Simulation
+                    Rectangle {
+                        height: 30px;
+                        background: #1e1e1e;
+                        border-width: 1px;
+                        border-color: #121212;
+
+                        HorizontalLayout {
+                            Rectangle { width: 200px; } // Offset for headers
+
+                            // Simple tick indicators spanning across the width
+                            HorizontalLayout {
+                                alignment: start;
+                                spacing: 130px;
+                                padding-left: 10px;
+                                for i in 60 : Text {
+                                    text: "\{i * 10}s";
+                                    color: #555555;
+                                    font-size: 11px;
+                                }
+                            }
+                        }
+                    }
+
+                for group[group_index] in root.groups : VerticalBox {
+                    padding: 0px;
+                    spacing: 2px;
+
+                    // Group Header
+                    Rectangle {
+                        height: 25px;
+                        background: #1a1a1a;
+                        border-radius: 4px;
+
+                        Text {
+                            text: group.name;
+                            color: #888888;
+                            font-size: 12px;
+                            font-weight: 600;
+                            x: 8px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Tracks within the Group
+                    for track[track_index] in group.tracks : HorizontalLayout {
+                        height: 40px;
+                        spacing: 2px;
+
+                        // Left Side Control Panel
+                        TrackHeader {
+                            track_name: track.name;
+                            is_soloed: track.is_soloed;
+                            is_muted: track.is_muted;
+                        }
+
+                        // Right Side Timeline Track lane
+                        Rectangle {
+                            background: #1e1e1e;
+                            clip: true;
+
+                            // Calculate variations of accent color based on track index
+                            property <color> track_color: root.accent_color.with_alpha(0.85).to_hsv().hue > 0 ?
+                                Colors.hsv(root.accent_color.to_hsv().hue + (track_index * 15.0), root.accent_color.to_hsv().saturation, root.accent_color.to_hsv().value) :
+                                root.accent_color.brighter(track_index * 10%);
+
+                            // Render Sections over the track lane
+                            for section in track.sections : SectionWidget {
+                                name: section.name;
+                                is_active: section.is_active;
+                                base_color: parent.track_color;
+
+                                // Coordinate mapping based on time
+                                x: section.start_time * root.time_scale * 1px;
+                                width: section.duration * root.time_scale * 1px;
+                                height: 34px;
+                                y: 3px;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
