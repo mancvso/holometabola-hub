@@ -1,0 +1,453 @@
+// ─────────────────────────────────────────────────────────────
+// Right-hand panel of the GRAPH view: stack status, quantum,
+// relay port, MIDI devices, orbit mutes, recording.
+// ─────────────────────────────────────────────────────────────
+import { Button, VerticalBox, HorizontalBox, LineEdit, ListView, ComboBox, ScrollView } from "std-widgets.slint";
+import { Theme, NodeState } from "theme.slint";
+import { ArtButton, Panel, StatusLine } from "components.slint";
+
+export struct MidiRow {
+    id: string,          // "14:0"
+    name: string,
+    direction: string,   // in / out / in+out
+}
+
+export struct SessionRow {
+    name: string,
+    info: string,        // stem count + date-ish suffix
+}
+
+export struct StemRow {
+    name: string,
+    size: string,
+    duration: string,
+}
+
+export struct MuteItemRow {
+    label: string,
+    muted: bool,
+}
+
+export struct MuteGroupRow {
+    name: string,
+    items: [MuteItemRow],
+}
+
+export component SidePanel inherits ScrollView {
+    preferred-width: 380px;
+
+    // ── stack status ─────────────────────────────────────────
+    in property <bool> orbits-online: false;
+    in property <bool> vocals-online: false;
+    in property <NodeState> tidal-node: NodeState.off;
+
+    // ── quantum ──────────────────────────────────────────────
+    in property <[string]> quantum-sizes: [];
+    in-out property <int> quantum-index: 4;   // 512
+
+    // ── relay ────────────────────────────────────────────────
+    in property <bool> relay-up: false;
+
+    // ── midi ─────────────────────────────────────────────────
+    in property <[MidiRow]> midi-rows: [];
+
+    // ── mutes ────────────────────────────────────────────────
+    in property <[MuteGroupRow]> mute-groups: [];
+
+    // ── recording ────────────────────────────────────────────
+    in-out property <string> session-name: "session";
+    in property <bool> rec-active: false;
+    in property <string> rec-elapsed: "00:00:00";
+    in property <string> rec-path: "—";
+    in property <[SessionRow]> sessions: [];
+    in property <[StemRow]> stems: [];
+    in property <int> selected-session: -1;
+
+    // ── callbacks ────────────────────────────────────────────
+    callback quantum-apply();
+    callback relay-start();
+    callback relay-stop();
+    callback relay-restart();
+    callback midi-refresh();
+    callback midi-reconnect(int);
+    callback orbit-mute(int, int);
+    callback rec-start();
+    callback rec-stop();
+    callback rec-refresh();
+    callback select-session(int);
+    callback rec-open-folder();
+
+    // ── ArtButton working/done state (forwarded from AppWindow) ──
+    in property <bool> quantum-apply-working: false;
+    in property <bool> quantum-apply-done: false;
+    in property <bool> relay-start-working: false;
+    in property <bool> relay-start-done: false;
+    in property <bool> relay-stop-working: false;
+    in property <bool> relay-stop-done: false;
+    in property <bool> relay-restart-working: false;
+    in property <bool> relay-restart-done: false;
+    in property <bool> midi-refresh-working: false;
+    in property <bool> midi-refresh-done: false;
+    in property <bool> rec-start-working: false;
+    in property <bool> rec-start-done: false;
+    in property <bool> rec-stop-working: false;
+    in property <bool> rec-stop-done: false;
+    in property <bool> rec-refresh-working: false;
+    in property <bool> rec-refresh-done: false;
+    in property <bool> rec-open-folder-working: false;
+    in property <bool> rec-open-folder-done: false;
+
+    VerticalBox {
+        padding: Theme.pad-l;
+        spacing: Theme.spacing-l;
+
+        // ── STACK ────────────────────────────────────────────
+        Panel {
+            title: "STACK";
+            accent: Theme.border;
+            VerticalBox {
+                spacing: Theme.spacing-m;
+                StatusLine {
+                    label: "ORBITS";
+                    value: root.orbits-online ? "ONLINE" : "CRASHED / OFF";
+                    color: root.orbits-online ? Theme.online : Theme.offline;
+                }
+                StatusLine {
+                    label: "VOCALS";
+                    value: root.vocals-online ? "ONLINE" : "CRASHED / OFF";
+                    color: root.vocals-online ? Theme.online : Theme.offline;
+                }
+                StatusLine {
+                    label: "TIDAL";
+                    value: root.tidal-node == NodeState.ready ? "ONLINE"
+                         : root.tidal-node == NodeState.running ? "BOOTING"
+                         : "OFFLINE";
+                    color: root.tidal-node == NodeState.ready ? Theme.online
+                         : root.tidal-node == NodeState.running ? Theme.warn
+                         : Theme.offline;
+                }
+            }
+        }
+
+        // ── QUANTUM ──────────────────────────────────────────
+        Panel {
+            title: "QUANTUM";
+            accent: Theme.accent-quantum;
+            VerticalBox {
+                spacing: Theme.spacing-m;
+                HorizontalBox {
+                    spacing: Theme.spacing-m;
+                    Text {
+                        text: "clock.force-quantum";
+                        color: Theme.text-dim;
+                        font-size: Theme.fs-xs * 1px;
+                        font-family: Theme.font;
+                        vertical-alignment: center;
+                    }
+                    ComboBox {
+                        preferred-width: 90px;
+                        model: root.quantum-sizes;
+                        current-index <=> root.quantum-index;
+                    }
+                    ArtButton {
+                        label: "APPLY";
+                        small: true;
+                        accent: Theme.accent-quantum;
+                        working: root.quantum-apply-working; done: root.quantum-apply-done;
+                        clicked => { root.quantum-apply(); }
+                    }
+                }
+                Text {
+                    text: "PipeWire now · scsynth on next boot";
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-xs * 1px;
+                    font-family: Theme.font;
+                }
+            }
+        }
+
+        // ── RELAY PORT ───────────────────────────────────────
+        Panel {
+            title: "RELAY PORT";
+            accent: Theme.warn;
+            VerticalBox {
+                spacing: Theme.spacing-m;
+                StatusLine {
+                    label: "6140";
+                    value: root.relay-up ? "UP" : "DOWN";
+                    color: root.relay-up ? Theme.online : Theme.offline;
+                }
+                HorizontalBox {
+                    spacing: Theme.spacing-s;
+                    ArtButton { label: "START"; small: true; accent: Theme.warn;
+                        enabled: !root.relay-up;
+                        working: root.relay-start-working; done: root.relay-start-done;
+                        clicked => { root.relay-start(); } }
+                    ArtButton { label: "STOP"; small: true; accent: Theme.warn;
+                        enabled: root.relay-up;
+                        working: root.relay-stop-working; done: root.relay-stop-done;
+                        clicked => { root.relay-stop(); } }
+                    ArtButton { label: "RESTART"; small: true; accent: Theme.warn;
+                        enabled: root.relay-up;
+                        working: root.relay-restart-working; done: root.relay-restart-done;
+                        clicked => { root.relay-restart(); } }
+                }
+                Text {
+                    text: "editor · song runner · benchmark";
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-xs * 1px;
+                    font-family: Theme.font;
+                }
+            }
+        }
+
+        // ── MIDI DEVICES ─────────────────────────────────────
+        Panel {
+            title: "MIDI DEVICES";
+            accent: Theme.accent-vocals;
+            VerticalBox {
+                spacing: Theme.spacing-m;
+                HorizontalBox {
+                    spacing: Theme.spacing-m;
+                    Text {
+                        text: "attached to sclang / scsynth";
+                        color: Theme.text-dim;
+                        font-size: Theme.fs-xs * 1px;
+                        font-family: Theme.font;
+                        vertical-alignment: center;
+                    }
+                    ArtButton { label: "REFRESH"; small: true; accent: Theme.accent-vocals;
+                        working: root.midi-refresh-working; done: root.midi-refresh-done;
+                        clicked => { root.midi-refresh(); } }
+                }
+                Rectangle {
+                    height: 110px;
+                    background: Theme.bg;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    ListView {
+                        for row[i] in root.midi-rows : HorizontalBox {
+                            height: 26px;
+                            spacing: Theme.spacing-m;
+                            padding-left: Theme.pad-s;
+                            padding-right: Theme.pad-s;
+                            Text {
+                                text: row.id;
+                                color: Theme.text-dim;
+                                font-size: Theme.fs-xs * 1px;
+                                font-family: Theme.font;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: row.name;
+                                color: Theme.text;
+                                font-size: Theme.fs-s * 1px;
+                                font-family: Theme.font;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: row.direction;
+                                color: Theme.text-dim;
+                                font-size: Theme.fs-xs * 1px;
+                                font-family: Theme.font;
+                                vertical-alignment: center;
+                            }
+                            ArtButton { label: "RECONNECT"; small: true; accent: Theme.accent-vocals;
+                                clicked => { root.midi-reconnect(i); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── ORBIT MUTES ──────────────────────────────────────
+        Panel {
+            title: "ORBIT MUTES";
+            accent: Theme.accent-tidal;
+            VerticalBox {
+                spacing: Theme.spacing-m;
+                for group[gi] in root.mute-groups : VerticalBox {
+                    spacing: Theme.pad-xs;
+                    Text {
+                        text: group.name;
+                        color: gi == 0 ? Theme.group-beats
+                              : gi == 1 ? Theme.group-leads
+                              : Theme.group-ambients;
+                        font-size: Theme.fs-xs * 1px;
+                        font-weight: 700;
+                        font-family: Theme.font;
+                        letter-spacing: 2px;
+                    }
+                    HorizontalBox {
+                        spacing: Theme.pad-xs;
+                        for item[ii] in group.items : Rectangle {
+                            width: 40px;
+                            height: 24px;
+                            border-radius: Theme.corner;
+                            border-width: 1px;
+                            border-color: item.muted ? Theme.danger : Theme.border;
+                            background: item.muted ? Theme.danger : Theme.panel;
+                            mute-touch := TouchArea {
+                                clicked => { root.orbit-mute(gi, ii); }
+                            }
+                            Text {
+                                text: item.label;
+                                color: item.muted ? Theme.bg : Theme.text-dim;
+                                font-size: Theme.fs-xs * 1px;
+                                font-weight: 700;
+                                font-family: Theme.font;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── RECORDING ────────────────────────────────────────
+        Panel {
+            title: "RECORDING";
+            accent: Theme.accent-rec;
+            VerticalBox {
+                spacing: Theme.spacing-m;
+
+                HorizontalBox {
+                    spacing: Theme.spacing-m;
+                    Text {
+                        text: "SESSION";
+                        color: Theme.text-dim;
+                        font-size: Theme.fs-xs * 1px;
+                        font-family: Theme.font;
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                    }
+                    LineEdit {
+                        preferred-width: 160px;
+                        text <=> root.session-name;
+                        placeholder-text: "session name";
+                    }
+                }
+
+                StatusLine {
+                    label: "STATE";
+                    value: root.rec-active ? "● REC \{root.rec-elapsed}" : "IDLE";
+                    color: root.rec-active ? Theme.danger : Theme.text-dim;
+                }
+                Text {
+                    text: root.rec-path;
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-xs * 1px;
+                    font-family: Theme.font;
+                }
+
+                HorizontalBox {
+                    spacing: Theme.spacing-s;
+                    ArtButton { label: "● REC START"; small: true; danger: true; accent: Theme.danger;
+                        enabled: !root.rec-active;
+                        working: root.rec-start-working; done: root.rec-start-done;
+                        clicked => { root.rec-start(); } }
+                    ArtButton { label: "■ REC STOP"; small: true; accent: Theme.accent-rec;
+                        enabled: root.rec-active;
+                        working: root.rec-stop-working; done: root.rec-stop-done;
+                        clicked => { root.rec-stop(); } }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                HorizontalBox {
+                    spacing: Theme.spacing-m;
+                    Text {
+                        text: "PAST SESSIONS";
+                        color: Theme.text-dim;
+                        font-size: Theme.fs-xs * 1px;
+                        font-family: Theme.font;
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    ArtButton { label: "REFRESH"; small: true; accent: Theme.accent-rec;
+                        working: root.rec-refresh-working; done: root.rec-refresh-done;
+                        clicked => { root.rec-refresh(); } }
+                    ArtButton { label: "OPEN"; small: true; accent: Theme.accent-rec;
+                        working: root.rec-open-folder-working; done: root.rec-open-folder-done;
+                        clicked => { root.rec-open-folder(); } }
+                }
+
+                Rectangle {
+                    height: 120px;
+                    background: Theme.bg;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    ListView {
+                        for session[si] in root.sessions : Rectangle {
+                            height: 24px;
+                            background: si == root.selected-session ? Theme.node-bg-hover : transparent;
+                            session-touch := TouchArea {
+                                clicked => { root.select-session(si); }
+                            }
+                            HorizontalBox {
+                                spacing: Theme.spacing-m;
+                                padding-left: Theme.pad-s;
+                                padding-right: Theme.pad-s;
+                                Text {
+                                    text: session.name;
+                                    color: si == root.selected-session ? Theme.accent-rec : Theme.text;
+                                    font-size: Theme.fs-s * 1px;
+                                    font-family: Theme.font;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: session.info;
+                                    color: Theme.text-dim;
+                                    font-size: Theme.fs-xs * 1px;
+                                    font-family: Theme.font;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 110px;
+                    background: Theme.bg;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    ListView {
+                        for stem in root.stems : HorizontalBox {
+                            height: 22px;
+                            spacing: Theme.spacing-m;
+                            padding-left: Theme.pad-s;
+                            padding-right: Theme.pad-s;
+                            Text {
+                                text: stem.name;
+                                color: Theme.text;
+                                font-size: Theme.fs-s * 1px;
+                                font-family: Theme.font;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: stem.duration;
+                                color: Theme.text-dim;
+                                font-size: Theme.fs-xs * 1px;
+                                font-family: Theme.font;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: stem.size;
+                                color: Theme.text-dim;
+                                font-size: Theme.fs-xs * 1px;
+                                font-family: Theme.font;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

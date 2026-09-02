@@ -1,0 +1,315 @@
+// ─────────────────────────────────────────────────────────────
+// The pipeline as a horizontal strip of components.
+// Launch chain: sclang → connect → pin threads → boot tidal.
+// Each node carries its readiness dot and its action buttons.
+// The 2D graph canvas iteration is parked in graph.slint.bak.
+// ─────────────────────────────────────────────────────────────
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme, NodeState } from "theme.slint";
+import { ArtButton } from "components.slint";
+
+export component ChainNode inherits Rectangle {
+    in property <string> label;
+    in property <string> sub-label;
+    in property <NodeState> state: NodeState.off;
+    in property <bool> is-next: false;   // next action in the chain
+    in property <bool> planned: false;   // PLANNED placeholder node
+    in property <color> accent: Theme.accent-orbits;
+    callback clicked();
+
+    width: Theme.node-w;
+    height: Theme.node-h;
+    preferred-width: Theme.node-w;
+    preferred-height: Theme.node-h;
+    border-radius: Theme.corner;
+    background: touch.has-hover && !root.planned
+             ? Theme.node-bg-hover : Theme.node-bg;
+    border-width: root.is-next && !root.planned ? 2px : 1px;
+    border-color: root.planned ? Theme.border-soft
+             : root.state == NodeState.ready ? Theme.ready
+             : root.state == NodeState.running ? root.accent
+             : root.is-next ? root.accent
+             : Theme.border;
+
+    touch := TouchArea {
+        enabled: !root.planned;
+        clicked => { root.clicked(); }
+    }
+
+    VerticalBox {
+        padding: Theme.pad-m;
+        spacing: Theme.pad-xs;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            color: root.planned ? Theme.planned-dim
+                 : root.state == NodeState.ready ? Theme.ready
+                 : root.state == NodeState.running ? root.accent
+                 : root.is-next ? root.accent
+                 : Theme.text;
+            font-size: Theme.fs-s * 1px;
+            font-weight: 700;
+            font-family: Theme.font;
+            letter-spacing: 2px;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.planned ? "PLANNED" : root.sub-label;
+            color: root.planned ? Theme.planned-dim : Theme.text-dim;
+            font-size: Theme.fs-xs * 1px;
+            font-family: Theme.font;
+            letter-spacing: 1px;
+            horizontal-alignment: center;
+        }
+    }
+
+    // Blue readiness dot, floats on the top-right corner
+    Rectangle {
+        visible: root.state == NodeState.ready;
+        x: root.width - Theme.dot-size / 2;
+        y: -Theme.dot-size / 2;
+        width: Theme.dot-size;
+        height: Theme.dot-size;
+        border-radius: Theme.dot-size / 2;
+        background: Theme.ready;
+    }
+}
+
+// Arrow between two stations; lit once the source node is ready.
+component ChainArrow inherits Rectangle {
+    in property <bool> lit: false;
+
+    preferred-width: 28px;
+    preferred-height: Theme.node-h;
+    width: root.preferred-width;
+    height: root.preferred-height;
+
+    Text {
+        text: "→";
+        color: root.lit ? Theme.ready : Theme.wire-idle;
+        font-size: Theme.fs-l * 1px;
+        font-weight: 700;
+        font-family: Theme.font;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component ChainStrip inherits Rectangle {
+    preferred-width: 980px;
+    preferred-height: 360px;
+    background: Theme.bg;
+
+    // ── node states, driven from Rust ────────────────────────
+    in property <NodeState> sclang-node: NodeState.off;
+    in property <NodeState> connect-node: NodeState.off;
+    in property <NodeState> pin-node: NodeState.off;
+    in property <NodeState> tidal-node: NodeState.off;
+    in property <NodeState> vocals-node: NodeState.off;
+
+    // ── actions (bound straight to AppWindow callbacks) ──────
+    callback boot-orbits-sclang();
+    callback boot-orbits-scsynth();
+    callback orbits-dump-tree();
+    callback orbits-init-tree();
+    callback panic-orbits();
+    callback connect-orbits();
+    callback pin-orbits-threads();
+    callback boot-tidal();
+    callback stop-tidal();
+    callback tidal-test-pattern();
+    callback tidal-hush();
+    callback boot-vocals();
+    callback panic-vocals();
+
+    // ── ArtButton working/done state (forwarded from AppWindow) ──
+    in property <bool> boot-orbits-sclang-working: false;
+    in property <bool> boot-orbits-sclang-done: false;
+    in property <bool> boot-orbits-scsynth-working: false;
+    in property <bool> boot-orbits-scsynth-done: false;
+    in property <bool> connect-orbits-working: false;
+    in property <bool> connect-orbits-done: false;
+    in property <bool> pin-orbits-threads-working: false;
+    in property <bool> pin-orbits-threads-done: false;
+    in property <bool> boot-tidal-working: false;
+    in property <bool> boot-tidal-done: false;
+    in property <bool> boot-vocals-working: false;
+    in property <bool> boot-vocals-done: false;
+    in property <bool> panic-orbits-working: false;
+    in property <bool> panic-orbits-done: false;
+    in property <bool> panic-vocals-working: false;
+    in property <bool> panic-vocals-done: false;
+    in property <bool> orbits-dump-tree-working: false;
+    in property <bool> orbits-dump-tree-done: false;
+    in property <bool> orbits-init-tree-working: false;
+    in property <bool> orbits-init-tree-done: false;
+    in property <bool> stop-tidal-working: false;
+    in property <bool> stop-tidal-done: false;
+    in property <bool> tidal-hush-working: false;
+    in property <bool> tidal-hush-done: false;
+    in property <bool> tidal-test-pattern-working: false;
+    in property <bool> tidal-test-pattern-done: false;
+
+    VerticalBox {
+        padding: Theme.pad-xl;
+        spacing: Theme.spacing-l;
+        alignment: start;
+
+        Text {
+            text: "ORBITS CHAIN · click a node to run its step";
+            color: Theme.text-dim;
+            font-size: Theme.fs-xs * 1px;
+            font-family: Theme.font;
+            letter-spacing: 3px;
+        }
+
+        // ── the launch chain ─────────────────────────────────
+        HorizontalBox {
+            spacing: Theme.spacing-m;
+            alignment: start;
+
+            // SCLANG
+            VerticalBox {
+                spacing: Theme.spacing-s;
+                alignment: start;
+                ChainNode {
+                    label: "SCLANG";
+                    sub-label: "6120 · boots 6110 + SuperDirt";
+                    state: root.sclang-node;
+                    is-next: root.sclang-node == NodeState.off;
+                    clicked => { root.boot-orbits-sclang(); }
+                }
+                HorizontalBox {
+                    spacing: Theme.spacing-s;
+                    ArtButton { label: "SCSYNTH"; small: true; accent: Theme.accent-orbits;
+                        working: root.boot-orbits-scsynth-working; done: root.boot-orbits-scsynth-done;
+                        clicked => { root.boot-orbits-scsynth(); } }
+                    ArtButton { label: "PANIC"; small: true; danger: true; accent: Theme.danger;
+                        working: root.panic-orbits-working; done: root.panic-orbits-done;
+                        clicked => { root.panic-orbits(); } }
+                }
+                HorizontalBox {
+                    spacing: Theme.spacing-s;
+                    ArtButton { label: "DUMP TREE"; small: true; accent: Theme.accent-orbits;
+                        working: root.orbits-dump-tree-working; done: root.orbits-dump-tree-done;
+                        clicked => { root.orbits-dump-tree(); } }
+                    ArtButton { label: "INIT TREE"; small: true; accent: Theme.accent-orbits;
+                        working: root.orbits-init-tree-working; done: root.orbits-init-tree-done;
+                        clicked => { root.orbits-init-tree(); } }
+                }
+            }
+
+            ChainArrow { lit: root.sclang-node == NodeState.ready; }
+
+            // CONNECT
+            VerticalBox {
+                spacing: Theme.spacing-s;
+                alignment: start;
+                ChainNode {
+                    label: "CONNECT";
+                    sub-label: "orbits:out → Onyx AUX";
+                    state: root.connect-node;
+                    is-next: root.sclang-node == NodeState.ready
+                          && root.connect-node == NodeState.off;
+                    clicked => { root.connect-orbits(); }
+                }
+                Text {
+                    text: "jack orbits → interface";
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-xs * 1px;
+                    font-family: Theme.font;
+                }
+            }
+
+            ChainArrow { lit: root.connect-node == NodeState.ready; }
+
+            // PIN THREADS
+            VerticalBox {
+                spacing: Theme.spacing-s;
+                alignment: start;
+                ChainNode {
+                    label: "PIN THREADS";
+                    sub-label: "dsp cpu 4 · aux cpu 10";
+                    state: root.pin-node;
+                    is-next: root.sclang-node == NodeState.ready
+                          && root.connect-node == NodeState.ready
+                          && root.pin-node == NodeState.off;
+                    clicked => { root.pin-orbits-threads(); }
+                }
+                Text {
+                    text: "run after CONNECT";
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-xs * 1px;
+                    font-family: Theme.font;
+                }
+            }
+
+            ChainArrow { lit: root.pin-node == NodeState.ready; }
+
+            // BOOT TIDAL
+            VerticalBox {
+                spacing: Theme.spacing-s;
+                alignment: start;
+                ChainNode {
+                    label: "BOOT TIDAL";
+                    sub-label: "ghci · BootTidal.hs";
+                    state: root.tidal-node;
+                    is-next: root.sclang-node == NodeState.ready
+                          && root.connect-node == NodeState.ready
+                          && root.pin-node == NodeState.ready
+                          && root.tidal-node == NodeState.off;
+                    accent: Theme.accent-tidal;
+                    clicked => { root.boot-tidal(); }
+                }
+                HorizontalBox {
+                    spacing: Theme.spacing-s;
+                    ArtButton { label: "STOP"; small: true; accent: Theme.accent-tidal;
+                        working: root.stop-tidal-working; done: root.stop-tidal-done;
+                        clicked => { root.stop-tidal(); } }
+                    ArtButton { label: "HUSH"; small: true; accent: Theme.accent-tidal;
+                        working: root.tidal-hush-working; done: root.tidal-hush-done;
+                        clicked => { root.tidal-hush(); } }
+                }
+                HorizontalBox {
+                    spacing: Theme.spacing-s;
+                    ArtButton { label: "TEST d1"; small: true; accent: Theme.accent-tidal;
+                        working: root.tidal-test-pattern-working; done: root.tidal-test-pattern-done;
+                        clicked => { root.tidal-test-pattern(); } }
+                }
+            }
+        }
+
+        // ── second strip: vocals + planned voice chain ───────
+        HorizontalBox {
+            spacing: Theme.spacing-m;
+            alignment: start;
+
+            VerticalBox {
+                spacing: Theme.spacing-s;
+                alignment: start;
+                ChainNode {
+                    label: "SCSYNTH VOCALS";
+                    sub-label: "port 6111 · cpu 5";
+                    state: root.vocals-node;
+                    accent: Theme.accent-vocals;
+                    clicked => { root.boot-vocals(); }
+                }
+                HorizontalBox {
+                    spacing: Theme.spacing-s;
+                    ArtButton { label: "PANIC"; small: true; danger: true; accent: Theme.danger;
+                        working: root.panic-vocals-working; done: root.panic-vocals-done;
+                        clicked => { root.panic-vocals(); } }
+                }
+            }
+
+            Rectangle { preferred-width: 30px; width: 30px; }
+
+            ChainNode { label: "VOICE SCLANG"; planned: true; accent: Theme.accent-vocals; }
+            ChainArrow { }
+            ChainNode { label: "VOICE CONNECT"; planned: true; accent: Theme.accent-vocals; }
+            ChainArrow { }
+            ChainNode { label: "VOICE PIN"; planned: true; accent: Theme.accent-vocals; }
+        }
+    }
+}

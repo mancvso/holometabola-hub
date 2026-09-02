@@ -1,0 +1,124 @@
+// ─────────────────────────────────────────────────────────────
+// BENCH view: drives tools/songrun.py + orbitprof once embedded.
+// UI only for now: fields + RUN stub + result placeholder.
+// ─────────────────────────────────────────────────────────────
+import { VerticalBox, HorizontalBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ArtButton, Panel, StatusLine } from "components.slint";
+
+export component BenchView inherits Rectangle {
+    preferred-width: 900px;
+    preferred-height: 560px;
+    background: Theme.bg;
+
+    in-out property <string> song-path: "runs/exxo/01-exxo-180bpm.tidal";
+    in-out property <string> out-dir: "runs/exxo";
+    in-out property <string> dwell: "30";
+    in property <string> bench-status: "IDLE";
+    in property <color> bench-status-color: Theme.text-dim;
+    in property <bool> bench-working: false;
+    in property <bool> bench-done: false;
+
+    callback bench-run();
+
+    VerticalBox {
+        padding: Theme.pad-l;
+        spacing: Theme.spacing-l;
+
+        Panel {
+            title: "BENCHMARK";
+            accent: Theme.accent-orbits;
+            VerticalBox {
+                spacing: Theme.spacing-m;
+
+                HorizontalBox {
+                    spacing: Theme.spacing-m;
+                    Text {
+                        text: "SONG";
+                        color: Theme.text-dim;
+                        font-size: Theme.fs-xs * 1px;
+                        font-family: Theme.font;
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                    }
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        text <=> root.song-path;
+                        placeholder-text: "path to a .tidal song file";
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: Theme.spacing-m;
+                    Text {
+                        text: "OUT";
+                        color: Theme.text-dim;
+                        font-size: Theme.fs-xs * 1px;
+                        font-family: Theme.font;
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                    }
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        text <=> root.out-dir;
+                        placeholder-text: "folder for .jsonl / .marks / .sections.json";
+                    }
+                    Text {
+                        text: "DWELL";
+                        color: Theme.text-dim;
+                        font-size: Theme.fs-xs * 1px;
+                        font-family: Theme.font;
+                        letter-spacing: 2px;
+                        vertical-alignment: center;
+                    }
+                    LineEdit {
+                        preferred-width: 60px;
+                        text <=> root.dwell;
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: Theme.spacing-m;
+                    ArtButton {
+                        label: "RUN BENCH";
+                        accent: Theme.accent-orbits;
+                        working: root.bench-working; done: root.bench-done;
+                        clicked => { root.bench-run(); }
+                    }
+                    StatusLine {
+                        label: "STATE";
+                        value: root.bench-status;
+                        color: root.bench-status-color;
+                    }
+                }
+
+                Text {
+                    text: "wraps tools/songrun.py: drains, fires each section, profiles orbits";
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-xs * 1px;
+                    font-family: Theme.font;
+                }
+            }
+        }
+
+        Panel {
+            title: "RESULTS";
+            accent: Theme.border;
+            VerticalBox {
+                spacing: Theme.spacing-m;
+                Text {
+                    text: "no run yet";
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-s * 1px;
+                    font-family: Theme.font;
+                }
+                Text {
+                    text: "per-section verdicts will land here: voice-seconds ranking,\nmeasured ceiling, and the orbit that blew the budget";
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-xs * 1px;
+                    font-family: Theme.font;
+                }
+            }
+        }
+    }
+}

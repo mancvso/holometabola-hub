@@ -1,0 +1,368 @@
+// ─────────────────────────────────────────────────────────────
+// SONG view: read-only DAW-style timeline of a song run.
+// Shape matches tools/songrun.py output (.sections.json +
+// .marks): groups of tracks, sections placed by start time.
+// Fed by Rust once the song runner is embedded; mock data for now.
+// ─────────────────────────────────────────────────────────────
+import { ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct SectionData {
+    name: string,
+    start-time: float,   // seconds
+    duration: float,     // seconds
+    is-active: bool,
+}
+
+export struct TrackData {
+    name: string,
+    is-soloed: bool,
+    is-muted: bool,
+    sections: [SectionData],
+}
+
+export struct GroupData {
+    name: string,
+    accent: color,
+    tracks: [TrackData],
+}
+
+component TrackHeader inherits Rectangle {
+    in property <string> track-name: "Track";
+    in property <color> accent: Theme.accent-orbits;
+    in property <bool> is-soloed: false;
+    in property <bool> is-muted: false;
+
+    width: 160px;
+    height: 36px;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border-soft;
+
+    HorizontalBox {
+        padding-left: Theme.pad-m;
+        padding-right: Theme.pad-m;
+        spacing: Theme.pad-xs;
+
+        Text {
+            text: root.track-name;
+            color: root.is-muted ? Theme.text-dim : Theme.text;
+            vertical-alignment: center;
+            font-size: Theme.fs-m * 1px;
+            font-weight: 700;
+            font-family: Theme.font;
+            horizontal-stretch: 1;
+        }
+
+        // Solo indicator
+        Rectangle {
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+            background: root.is-soloed ? Theme.warn : Theme.node-bg;
+            Text {
+                text: "S";
+                color: root.is-soloed ? Theme.bg : Theme.text-dim;
+                font-size: Theme.fs-s * 1px;
+                font-weight: 700;
+                font-family: Theme.font;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Mute indicator
+        Rectangle {
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+            background: root.is-muted ? Theme.danger : Theme.node-bg;
+            Text {
+                text: "M";
+                color: root.is-muted ? Theme.text : Theme.text-dim;
+                font-size: Theme.fs-s * 1px;
+                font-weight: 700;
+                font-family: Theme.font;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component SectionBlock inherits Rectangle {
+    in property <string> name: "Section";
+    in property <bool> is-active: true;
+    in property <color> base-color: Theme.accent-orbits;
+
+    border-radius: Theme.corner;
+    border-width: 1px;
+    background: root.base-color;
+    border-color: root.is-active ? root.base-color.brighter(30%) : root.base-color.darker(40%);
+    opacity: root.is-active ? 0.9 : 0.3;
+
+    Text {
+        text: root.name;
+        color: root.is-active ? Theme.bg : Theme.text-dim;
+        font-size: Theme.fs-s * 1px;
+        font-family: Theme.font;
+        x: Theme.pad-s;
+        vertical-alignment: center;
+    }
+}
+
+export component SongTimeline inherits Rectangle {
+    preferred-width: 900px;
+    preferred-height: 560px;
+    background: Theme.bg;
+
+    // Pixels per second on the lane axis
+    in property <float> time-scale: 8.0;
+    // Total song length in seconds (drives ruler + viewport)
+    in property <float> song-duration: 1500.0;
+    // Playhead in seconds; negative hides it
+    in property <float> playhead: -1.0;
+
+    // Injected by Rust once the song runner is embedded. Kept populated
+    // with a mock here so the timeline is always instantiated with data;
+    // Rust overwrites it on APPLY.
+    in property <[GroupData]> groups: [
+        {
+            name: "BEATS",
+            accent: Theme.accent-tidal,
+            tracks: [
+                {
+                    name: "b1",
+                    is-muted: false,
+                    is-soloed: false,
+                    sections: [
+                        { name: "omminous", start-time: 0, duration: 30, is-active: true },
+                        { name: "higher energy", start-time: 90, duration: 30, is-active: true },
+                        { name: "deep beat @60", start-time: 480, duration: 60, is-active: true },
+                    ]
+                },
+                {
+                    name: "b5",
+                    is-muted: true,
+                    is-soloed: false,
+                    sections: [
+                        { name: "section-3", start-time: 60, duration: 30, is-active: false },
+                        { name: "interrupts", start-time: 210, duration: 30, is-active: false },
+                    ]
+                },
+                {
+                    name: "b6",
+                    is-muted: false,
+                    is-soloed: true,
+                    sections: [
+                        { name: "omminous", start-time: 0, duration: 60, is-active: true },
+                        { name: "RADIANT", start-time: 630, duration: 30, is-active: true },
+                    ]
+                },
+            ]
+        },
+        {
+            name: "LEADS",
+            accent: Theme.accent-orbits,
+            tracks: [
+                {
+                    name: "l1",
+                    is-muted: false,
+                    is-soloed: false,
+                    sections: [
+                        { name: "section-3", start-time: 60, duration: 30, is-active: true },
+                        { name: "playful", start-time: 330, duration: 30, is-active: true },
+                    ]
+                },
+                {
+                    name: "l4",
+                    is-muted: false,
+                    is-soloed: false,
+                    sections: [
+                        { name: "section-7", start-time: 180, duration: 30, is-active: true },
+                        { name: "moving wings", start-time: 780, duration: 30, is-active: true },
+                    ]
+                },
+            ]
+        },
+        {
+            name: "AMBIENTS",
+            accent: Theme.accent-rec,
+            tracks: [
+                {
+                    name: "a1",
+                    is-muted: false,
+                    is-soloed: false,
+                    sections: [
+                        { name: "omminous", start-time: 0, duration: 90, is-active: true },
+                        { name: "subito", start-time: 300, duration: 30, is-active: true },
+                        { name: "finally", start-time: 540, duration: 30, is-active: true },
+                    ]
+                },
+                {
+                    name: "a5",
+                    is-muted: true,
+                    is-soloed: false,
+                    sections: [
+                        { name: "higher energy", start-time: 90, duration: 60, is-active: false },
+                    ]
+                },
+            ]
+        },
+    ];
+
+    // Group accents, indexed in the same order as `groups` (BEATS,
+    // LEADS, AMBIENTS). Kept here rather than on each GroupData so the
+    // Rust parser never needs to know a color -- same convention as
+    // the mute grid (mute_model() in main.rs).
+    property <[color]> group-accents: [
+        Theme.group-beats, Theme.group-leads, Theme.group-ambients,
+    ];
+
+    // Accent for group i, falling back to the first when out of range.
+    function accent-for(i: int) -> color {
+        root.group-accents[i < 0 || i >= root.group-accents.length ? 0 : i]
+    }
+
+    property <length> header-w: 160px;
+
+    // Top bar: title + read-only note
+    VerticalBox {
+        padding: 0px;
+        spacing: 0px;
+
+        Rectangle {
+            height: 36px;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            HorizontalBox {
+                padding-left: Theme.pad-xl;
+                spacing: Theme.spacing-l;
+                Text {
+                    text: "SONG TIMELINE";
+                    color: Theme.text;
+                    font-size: Theme.fs-s * 1px;
+                    font-weight: 700;
+                    font-family: Theme.font;
+                    letter-spacing: 2px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "read-only · fed by the song runner once embedded";
+                    color: Theme.text-dim;
+                    font-size: Theme.fs-xs * 1px;
+                    font-family: Theme.font;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            viewport-width: root.header-w
+                + root.song-duration * root.time-scale * 1px
+                + 40px;
+
+            VerticalBox {
+                alignment: start;
+                spacing: Theme.spacing-l;
+                padding: Theme.pad-m;
+
+                // Time ruler
+                Rectangle {
+                    height: 26px;
+                    background: Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border-soft;
+
+                    HorizontalBox {
+                        Rectangle { width: root.header-w; }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            clip: true;
+                            // One tick every 30s, up to 30 minutes
+                            for i in 60 : Rectangle {
+                                visible: (i * 30.0) <= root.song-duration;
+                                x: (i * 30.0) * root.time-scale * 1px;
+                                width: 40px;
+                                height: 100%;
+                                Text {
+                                    x: 4px;
+                                    text: "\{i * 30}s";
+                                    color: Theme.text-dim;
+                                    font-size: Theme.fs-xs * 1px;
+                                    font-family: Theme.font;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for group[group-index] in root.groups : VerticalBox {
+                    padding: 0px;
+                    spacing: 2px;
+
+                    // Group header
+                    Rectangle {
+                        height: 22px;
+                        background: Theme.node-bg;
+                        border-radius: Theme.corner;
+                        Text {
+                            text: group.name;
+                            color: root.accent-for(group-index);
+                            font-size: Theme.fs-s * 1px;
+                            font-weight: 700;
+                            font-family: Theme.font;
+                            letter-spacing: 3px;
+                            x: Theme.pad-m;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    for track[track-index] in group.tracks : HorizontalBox {
+                        height: 36px;
+                        spacing: 0px;
+
+                        TrackHeader {
+                            track-name: track.name;
+                            accent: root.accent-for(group-index);
+                            is-soloed: track.is-soloed;
+                            is-muted: track.is-muted;
+                        }
+
+                        // Lane
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            background: Theme.panel;
+                            border-width: 1px;
+                            border-color: Theme.border-soft;
+                            clip: true;
+
+                            for section in track.sections : SectionBlock {
+                                name: section.name;
+                                is-active: section.is-active;
+                                base-color: root.accent-for(group-index);
+                                x: section.start-time * root.time-scale * 1px;
+                                width: max(section.duration * root.time-scale * 1px, 30px);
+                                height: 28px;
+                                y: 3px;
+                            }
+
+                            // Playhead
+                            Rectangle {
+                                visible: root.playhead >= 0.0;
+                                x: root.playhead * root.time-scale * 1px;
+                                width: 2px;
+                                height: 100%;
+                                background: Theme.warn;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

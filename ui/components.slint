@@ -1,0 +1,202 @@
+// ─────────────────────────────────────────────────────────────
+// Shared building blocks. All styling flows from Theme.
+// ─────────────────────────────────────────────────────────────
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+// Custom button with strong visual identity.
+//
+// working: true  -> "in progress / loading": accent-tinted border + text
+//                   with a slow opacity pulse so the button reads as
+//                   busy while the Rust handler runs. Set on press.
+// done:    true  -> "finished": border + text take Theme.ready (the
+//                   same indigo the chain nodes use) and a blue
+//                   readiness dot floats on the top-right corner --
+//                   exactly like ChainNode in chain.slint. Sticky:
+//                   stays until the next press clears it (the Rust
+//                   handler sets working=false, done=true on
+//                   completion and done=false on the next press).
+//
+// Precedence: done > working > idle. Both default to false, so every
+// existing ArtButton that does not bind them keeps its old look.
+export component ArtButton inherits Rectangle {
+    in property <string> label;
+    in property <color> accent: Theme.accent-orbits;
+    in property <bool> danger: false;
+    in property <bool> small: false;
+    in property <bool> enabled: true;
+    in property <bool> working: false;
+    in property <bool> done: false;
+    callback clicked();
+
+    // The pulse is a single property animated back and forth; the
+    // background opacity rides it only while working (and not done).
+    property <float> pulse: 1.0;
+    animate pulse {
+        duration: 900ms;
+        iteration-count: -1;
+        easing: ease-in-out;
+    }
+    states [
+        pulsing when root.working && !root.done && root.enabled : {
+            pulse: 0.45;
+        }
+    ]
+
+    preferred-width: root.small ? Theme.btn-s-w : Theme.btn-w;
+    preferred-height: root.small ? Theme.btn-s-h : Theme.btn-h;
+    width: root.preferred-width;
+    height: root.preferred-height;
+    border-width: 1px;
+    border-color: !root.enabled ? Theme.border
+              : root.done ? Theme.ready
+              : root.working ? root.accent
+              : root.accent;
+    background: !root.enabled ? Theme.bg
+             : root.done ? Theme.panel
+             : root.working ? root.accent
+             : touch.pressed ? root.accent
+             : touch.has-hover ? root.accent
+             : Theme.panel;
+    // The working pulse dims the whole button body; done and idle
+    // stay at full opacity.
+    opacity: !root.enabled ? 0.45
+          : root.done ? 1.0
+          : root.working ? root.pulse
+          : 1.0;
+
+    touch := TouchArea {
+        enabled: root.enabled && !root.working;
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.label;
+        color: !root.enabled ? Theme.text-dim
+           : root.done ? Theme.ready
+           : (touch.pressed || touch.has-hover) && root.enabled ? Theme.bg
+           : root.working ? Theme.bg
+           : root.accent;
+        font-size: Theme.fs-s * 1px;
+        font-weight: 700;
+        font-family: Theme.font;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        letter-spacing: 1.5px;
+    }
+
+    // Blue readiness dot, floats on the top-right corner -- same
+    // placement and color as ChainNode's dot in chain.slint.
+    Rectangle {
+        visible: root.done;
+        x: root.width - Theme.dot-size / 2;
+        y: -Theme.dot-size / 2;
+        width: Theme.dot-size;
+        height: Theme.dot-size;
+        border-radius: Theme.dot-size / 2;
+        background: Theme.ready;
+    }
+}
+
+// Panel wrapper with a bright title bar
+export component Panel inherits Rectangle {
+    in property <string> title;
+    in property <color> accent: Theme.accent-orbits;
+
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: root.accent;
+
+    VerticalBox {
+        padding: Theme.pad-l;
+        spacing: Theme.spacing-m;
+
+        // Title bar
+        Rectangle {
+            height: 22px;
+            background: root.accent;
+            HorizontalBox {
+                padding-left: Theme.pad-m;
+                padding-right: Theme.pad-m;
+                Text {
+                    text: root.title;
+                    // Dark text on bright accent background
+                    color: Theme.bg;
+                    font-size: Theme.fs-s * 1px;
+                    font-weight: 700;
+                    font-family: Theme.font;
+                    letter-spacing: 3px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Content
+        @children
+    }
+}
+
+// Status indicator (colored dot + label)
+export component StatusLine inherits HorizontalBox {
+    in property <string> label;
+    in property <string> value;
+    in property <color> color: Theme.accent-rec;
+
+    spacing: Theme.spacing-m;
+    Rectangle {
+        width: 8px; height: 8px;
+        border-radius: 4px;
+        background: root.color;
+    }
+    Text {
+        text: root.label;
+        color: Theme.text-dim;
+        font-size: Theme.fs-xs * 1px;
+        font-family: Theme.font;
+        letter-spacing: 1px;
+        vertical-alignment: center;
+    }
+    Text {
+        text: root.value;
+        color: root.color;
+        font-size: Theme.fs-s * 1px;
+        font-weight: 700;
+        font-family: Theme.font;
+        vertical-alignment: center;
+    }
+}
+
+// Header view-switcher tab
+export component TabButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    in property <color> accent: Theme.accent-orbits;
+    callback clicked();
+
+    preferred-width: 90px;
+    preferred-height: 26px;
+    width: root.preferred-width;
+    height: root.preferred-height;
+    border-width: 1px;
+    border-color: root.active ? root.accent : Theme.border;
+    background: root.active ? root.accent
+             : touch.has-hover ? Theme.node-bg-hover
+             : Theme.panel;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.label;
+        color: root.active ? Theme.bg
+             : touch.has-hover ? root.accent
+             : Theme.text-dim;
+        font-size: Theme.fs-s * 1px;
+        font-weight: 700;
+        font-family: Theme.font;
+        letter-spacing: 2px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}

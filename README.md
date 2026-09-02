@@ -14,8 +14,16 @@ still works by hand in the SC IDE or a plain `ghci`.
 
 | path | role |
 |---|---|
-| `src/main.rs` | process supervision, JACK wiring, UI callbacks |
-| `ui/app.slint` | the panel |
+| `src/main.rs` | process supervision, JACK wiring, readiness detection, UI callbacks |
+| `src/midi.rs` | ALSA MIDI device enumeration (`aconnect`) for the MIDI panel |
+| `src/recordings.rs` | past-session browser data (sizes, durations from file size) |
+| `ui/app.slint` | window shell: header tabs (GRAPH / SONG / BENCH), footer |
+| `ui/theme.slint` | every color, padding and spacing constant; `NodeState` enum |
+| `ui/chain.slint` | the pipeline as a horizontal strip of nodes with readiness dots |
+| `ui/sidebar.slint` | stack status, quantum, relay port, MIDI, mutes, recording |
+| `ui/timeline.slint` | read-only DAW-style song timeline (mock data until the song runner is embedded) |
+| `ui/bench.slint` | benchmark UI shell (not wired yet) |
+| `ui/graph.slint.bak` | parked iteration: full 2D node-graph canvas |
 | `startup.scd` | SuperCollider boot: server options, SuperDirt, orbits. **CONFIG block at the top** |
 | `recording.scd` | multi-track recorder, one stem per orbit |
 | `BootTidal.hs` | Tidal boot: ports and the `Tidally` instance |
@@ -57,13 +65,19 @@ This matters when the two halves live on different machines — see *Remote spli
 cargo build && ./target/debug/live_audio_control
 ```
 
-Boot order is **strict**:
+Boot order is **strict**, and the GRAPH view renders it as a node strip —
+`sclang → connect → pin threads → boot tidal` — with a blue readiness dot on
+each node once its step is confirmed:
 
-1. **BOOT SCLANG** — sclang boots scsynth and SuperDirt. Wait for
+1. **SCLANG** — click the node. Ready when sclang prints
    `HUB: scsynth=6110 langPort=6120 dirt=6122 clientID=0 ...`
-2. **CONNECT** — wires `orbits:out_N` to the interface
-3. **BOOT TIDAL** — wait for `Connected to SuperDirt.`
-4. Play
+2. **CONNECT** — click the node; ready when every `jack_connect` succeeds
+3. **PIN THREADS** — click the node; ready once `data-loop.0` is pinned
+4. **BOOT TIDAL** — ready on `Connected to SuperDirt.`
+5. Play
+
+The next step in the chain is highlighted. Booting a fresh sclang demotes
+every later node (their work does not survive a stack reboot).
 
 **Any SuperDirt or server restart requires restarting Tidal.** Tidal handshakes
 exactly once, caches SuperDirt's control-bus indices, and never asks again
@@ -84,6 +98,8 @@ Hub owns the Tidal process; the editor is a thin client that ships text to it.
 Port **6140** takes newline-delimited lines and relays each one verbatim into
 ghci's stdin. It never parses Haskell: the lite-xl plugin already emits `:{`,
 the block's lines, then `:}`, and ghci does the multi-line accumulation itself.
+The RELAY PORT panel in the sidebar shows its state and can START / STOP /
+RESTART it (a stop closes the listener; open connections drain out).
 
 The plugin lives at `~/litexl-tidalcycles` and reaches Hub through `nc`, so it
 needs no luasocket. `ctrl+shift+return` evaluates the selection;
@@ -130,13 +146,22 @@ Derived from those two: total orbits, `numOutputBusChannels` (2× orbits),
 `numAudioBusChannels`, the `~dirt.start` bus list, the `~b1../~l1../~a1..`
 handles, and the recorder's stem names.
 
-One value must be kept in step by hand: **`ORBITS_OUT_CHANNELS` in
-[`src/main.rs`](src/main.rs)**, which drives the CONNECT loop and the direct
-scsynth boot's `-o`. It is 36 today (18 stereo orbits); 36 orbits makes it 72.
+Two values must be kept in step by hand in [`src/main.rs`](src/main.rs):
+
+- **`ORBITS_OUT_CHANNELS`** drives the CONNECT loop and the direct scsynth
+  boot's `-o`. It is 36 today (18 stereo orbits); 36 orbits makes it 72.
+- **`MUTE_GROUP_LETTERS` / `ORBITS_PER_GROUP`** drive the mute grid in the
+  sidebar. They mirror `~hubGroups` / `~hubPerGroup` and the `b1..` aliases
+  in `BootTidal.hs`.
 
 ---
 
 ## Recording
+
+The RECORDING panel shows live state (● REC + elapsed + target folder) driven
+by the `HUB REC:` lines sclang prints, and a browser of past sessions: select
+a session to list its stems (size and duration derived from file size — stems
+are int24 stereo 48 kHz), OPEN hands the folder to the file manager.
 
 **REC START** / **REC STOP**, with a session name field. Output:
 
@@ -156,6 +181,18 @@ Three details that are load-bearing:
   the orbit's audio for the cycle rather than an empty bus.
 - Stop waits 0.3 s after freeing the synths before closing buffers, or DiskOut
   loses its last block.
+
+---
+
+## Quantum
+
+The QUANTUM panel picks the PipeWire quantum: 32…2048, default 512. APPLY
+runs `pw-metadata -n settings 0 clock.force-quantum <size>`, which moves the
+global graph immediately, and stores the size for the next scsynth boot: the
+direct boot's `-p`, `-z` and `-Z` follow it. That matters because
+`pw-jack -p` sets `node.force-quantum`, which **overrides** the global
+setting — a running server keeps its old quantum until rebooted. The measured
+cost/budget numbers are quantum-specific; see `tools/README.md`.
 
 ---
 

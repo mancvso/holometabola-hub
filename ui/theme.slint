@@ -1,0 +1,88 @@
+// ─────────────────────────────────────────────────────────────
+// Theme: every color, padding, spacing and font in the app comes
+// from this one global. No literals in components.
+//
+// Final palette (all brand colors below):
+//   royal-violet   #7702ca    cyan-glow      #34fefb
+//   magenta        #f521fd    coffee-bean    #130b0c
+//   bright-lemon   #fbf431    bright-peony   #f873fc
+//   bright-indigo  #1844d6    purple         #77036a
+//   raspberry-plum #af1483
+// Neutrals (panel/borders/text) are warm shades derived from
+// coffee-bean and purple to sit under that palette.
+// ─────────────────────────────────────────────────────────────
+
+export global Theme {
+    // ── base (coffee-bean + purple derivatives) ───────────────
+    out property <color> bg: #000000;          // coffee-bean
+    out property <color> panel: #1a1113;
+    out property <color> border: #36022f;      // purple, darkened
+    out property <color> border-soft: #24011f;
+    out property <color> text: #f3e9f0;
+    out property <color> text-dim: #8f7287;
+    out property <color> text-mid: #b093a8;
+
+    // ── per-system accents ───────────────────────────────────
+    out property <color> accent-orbits: #34fefb;   // cyan-glow
+    out property <color> accent-tidal: #f521fd;    // magenta
+    out property <color> accent-vocals: #f873fc;   // bright-peony
+    out property <color> accent-rec: #fbf431;      // bright-lemon
+    out property <color> accent-quantum: #7702ca;  // royal-violet
+
+    // ── mute group accents ────────────────────────────────
+    out property <color> group-beats: #ff2d95;
+    out property <color> group-leads: #00e5ff;
+    out property <color> group-ambients: #00ff88;
+
+    // ── panic ────────────────────────────────────────────────
+    out property <color> panic-red: #ff3b30;
+
+    // ── state colors ─────────────────────────────────────────
+    out property <color> danger: #af1483;          // raspberry-plum
+    out property <color> warn: #fbf431;            // bright-lemon
+    out property <color> ready: #1844d6;           // bright-indigo (readiness dot / lit wires)
+    out property <color> online: #34fefb;          // cyan-glow
+    out property <color> offline: #af1483;         // raspberry-plum
+    out property <color> wire-idle: #2c1530;
+
+    // ── canvas ───────────────────────────────────────────────
+    out property <color> node-bg: #170e10;
+    out property <color> node-bg-hover: #221418;
+    out property <color> planned-dim: #55404d;
+
+    // ── spacing (px) ─────────────────────────────────────────
+    out property <length> pad-xs: 4px;
+    out property <length> pad-s: 6px;
+    out property <length> pad-m: 10px;
+    out property <length> pad-l: 12px;
+    out property <length> pad-xl: 16px;
+    out property <length> spacing-s: 6px;
+    out property <length> spacing-m: 8px;
+    out property <length> spacing-l: 12px;
+    out property <length> corner: 4px;
+
+    // ── nodes ────────────────────────────────────────────────
+    out property <length> node-w: 170px;
+    out property <length> node-h: 74px;
+    out property <length> dot-size: 9px;
+
+    // ── buttons ──────────────────────────────────────────────
+    out property <length> btn-w: 150px;
+    out property <length> btn-h: 34px;
+    out property <length> btn-s-w: 108px;
+    out property <length> btn-s-h: 26px;
+
+    // ── typography ───────────────────────────────────────────
+    out property <string> font: "Agave, JetBrains Mono, Consolas, monospace";
+    out property <int> fs-xs: 10;
+    out property <int> fs-s: 11;
+    out property <int> fs-m: 12;
+    out property <int> fs-l: 14;
+}
+
+// Visual state of a chain node / pipeline component.
+export enum NodeState {
+    off,        // not started, nothing running
+    running,    // started / in flight, readiness line not seen yet
+    ready,      // readiness marker confirmed
+}
