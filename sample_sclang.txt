@@ -1,0 +1,316 @@
+**Exploration: sclang**
+
+Found 50 symbols across 2 files.
+
+**Blast radius — what depends on these (update/verify before editing)**
+
+- `SCLANG_PORT` (src/main.rs:731) — 2 callers in `src/main.rs`; no tests found within 3 caller hops
+- `SCLANG_RT_PRIO` (src/main.rs:885) — 1 caller in `src/main.rs`; no tests found within 3 caller hops
+- `orbits_sclang_args` (src/main.rs:887) — 1 caller in `src/main.rs`; no tests found within 3 caller hops
+- `is_process_running` (src/main.rs:185) — 2 callers in `src/main.rs`; no tests found within 3 caller hops
+- `set_rec` (src/main.rs:488) — 1 caller in `src/main.rs`; no tests found within 3 caller hops
+
+**Source Code**
+
+> The code below is the **verbatim, current on-disk source** of these files — re-read from disk on this call and line-numbered, byte-for-byte identical to what the Read tool returns. It is NOT a summary, outline, or stale cache. Treat each block as a Read you have already performed: do not Read a file shown here.
+
+**`src/main.rs`** — log_line(calls), set_node_state(calls), new(calls), references(references), NodeId(references), +31 more
+
+```rust
+118	// AppWindow methods, keeping the call sites one line each.
+119	type BoolSetter = fn(&AppWindow, bool);
+120	
+121	fn btn_press(ui_weak: &slint::Weak<AppWindow>, set_working: BoolSetter, set_done: BoolSetter) {
+122	    let uw = ui_weak.clone();
+123	    let _ = slint::invoke_from_event_loop(move || {
+124	        if let Some(ui) = uw.upgrade() {
+125	            set_done(&ui, false);      // clear sticky done from the previous press
+126	            set_working(&ui, true);
+127	        }
+128	    });
+129	}
+130	
+131	fn btn_done(ui_weak: &slint::Weak<AppWindow>, set_working: BoolSetter, set_done: BoolSetter) {
+132	    let uw = ui_weak.clone();
+133	    let _ = slint::invoke_from_event_loop(move || {
+134	        if let Some(ui) = uw.upgrade() {
+135	            set_working(&ui, false);
+136	            set_done(&ui, true);       // sticky: stays until the next press
+137	        }
+138	    });
+139	}
+140	
+141	// Boot order is strict (see README), so a fresh sclang invalidates every
+142	// step after it. A rebooted stack also invalidates a live Tidal: it
+143	// handshakes once and keeps writing the dead instance's busses.
+144	fn mark_spawned(ui_weak: &slint::Weak<AppWindow>, node: Option<NodeId>) {
+145	    match node {
+146	        Some(NodeId::Sclang) => {
+147	            set_node_state(ui_weak, NodeId::Sclang, NodeState::Running);
+148	            for n in [NodeId::Connect, NodeId::Pin, NodeId::Tidal] {
+149	                set_node_state(ui_weak, n, NodeState::Off);
+150	            }
+151	            log_line(
+152	                ui_weak,
+153	                "[chain] fresh sclang: CONNECT and PIN must run again; restart Tidal".into(),
+154	            );
+155	        }
+156	        Some(NodeId::Tidal) => set_node_state(ui_weak, NodeId::Tidal, NodeState::Running),
+157	        Some(NodeId::Vocals) => set_node_state(ui_weak, NodeId::Vocals, NodeState::Running),
+158	        _ => {}
+159	    }
+160	}
+161	
+162	fn mark_exited(ui_weak: &slint::Weak<AppWindow>, node: Option<NodeId>) {
+163	    match node {
+164	        Some(NodeId::Sclang) => {
+165	            for n in [NodeId::Sclang, NodeId::Connect, NodeId::Pin, NodeId::Tidal] {
+166	                set_node_state(ui_weak, n, NodeState::Off);
+167	            }
+168	            log_line(
+169	                ui_weak,
+170	                "[chain] sclang gone: boot the chain again, tidal included".into(),
+171	            );
+172	        }
+173	        Some(NodeId::Tidal) => set_node_state(ui_weak, NodeId::Tidal, NodeState::Off),
+174	        Some(NodeId::Vocals) => set_node_state(ui_weak, NodeId::Vocals, NodeState::Off),
+175	        _ => {}
+176	    }
+177	}
+178	
+179	// Asynchronously inspect active ports via native Linux commands.
+180	//
+
+... (gap) ...
+
+182	// sclang boot path goes through Server.program, which inserts `-B <addr>`
+183	// there, so a literal "scsynth -u <port>" only ever matched the direct boot
+184	// and reported CRASHED for a perfectly healthy sclang-booted server.
+185	fn is_process_running(port: &str) -> bool {
+186	    let output = Command::new("pgrep")
+187	        .args(["-f", &format!("scsynth.*-u {}", port)])
+188	        .output();
+189	
+190	    if let Ok(out) = output {
+191	        !out.stdout.is_empty()
+192	    } else {
+193	        false
+194	    }
+195	}
+196	
+197	fn kill_server(ui_weak: &slint::Weak<AppWindow>, port: &str) {
+198	    let pattern = format!("scsynth -u {}", port);
+199	    log_line(ui_weak, format!("$ pkill -f \"{pattern}\""));
+200	    let _ = Command::new("pkill").args(["-f", &pattern]).status();
+201	}
+202	
+203	// Per-thread pinning for the orbits server.
+204	//
+
+... (gap) ...
+
+220	// The sclang boot path goes through Server.program, which inserts `-B <addr>`
+221	// ahead of `-u <port>`, so a literal "scsynth -u <port>" pattern never matches
+222	// it. Allow anything between the two.
+223	fn orbits_scsynth_pid() -> Option<u32> {
+224	    let out = Command::new("pgrep")
+225	        .args(["-f", &format!("scsynth.*-u {}", ORBITS_PORT)])
+226	        .output()
+227	        .ok()?;
+228	    String::from_utf8_lossy(&out.stdout)
+229	        .split_whitespace()
+230	        .next()
+231	        .and_then(|s| s.parse().ok())
+232	}
+233	
+234	fn pin_orbits_threads(ui_weak: slint::Weak<AppWindow>) {
+235	    set_node_state(&ui_weak, NodeId::Pin, NodeState::Running);
+236	
+237	    let Some(pid) = orbits_scsynth_pid() else {
+238	        log_line(&ui_weak, "[pin] no orbits scsynth running".into());
+239	        set_node_state(&ui_weak, NodeId::Pin, NodeState::Off);
+240	        return;
+241	    };
+242	
+
+... (gap) ...
+
+327	// stdout line that proves a component is ready.
+328	//   sclang -> "HUB: scsynth="        (last postln of startup.scd's waitForBoot)
+329	//   tidal  -> "Connected to SuperDirt."  (Target.hs handshake, cVerbose on)
+330	type ReadyMarker = (&'static str, NodeId);
+331	
+332	// Watches one stream of a child, forwarding every line to the log. When a
+333	// readiness marker is configured, the first line containing it promotes the
+334	// node to Ready -- once per process instance.
+335	async fn watch_lines(
+336	    name: &'static str,
+337	    mut lines: tokio::io::Lines<BufReader<impl tokio::io::AsyncRead + Unpin>>,
+338	    ui_weak: slint::Weak<AppWindow>,
+339	    ready: Option<ReadyMarker>,
+340	    ready_seen: Arc<AtomicBool>,
+341	) {
+342	    while let Ok(Some(line)) = lines.next_line().await {
+343	        if let Some((marker, node)) = ready {
+344	            if line.contains(marker) && !ready_seen.swap(true, Ordering::SeqCst) {
+345	                set_node_state(&ui_weak, node, NodeState::Ready);
+346	            }
+347	        }
+348	        if name == "orbits" {
+349	            handle_rec_line(&line, &ui_weak);
+350	        }
+351	        log_line(&ui_weak, format!("[{name}] {line}"));
+352	    }
+353	}
+354	
+355	// Every child goes through here. stdin is always piped -- both so we can send
+356	// it commands, and so it never inherits (and blocks on) the app's own terminal.
+
+... (gap) ...
+
+359	    name: &'static str,
+360	    args: Vec<String>,
+361	    init: Option<&'static str>,
+362	    slot: ProcIn,
+363	    ready: Option<ReadyMarker>,
+364	    node: Option<NodeId>,
+365	    ui_weak: slint::Weak<AppWindow>,
+366	) {
+367	    // Held across the spawn so a double-click cannot start a second copy.
+368	    let mut guard = slot.lock().await;
+369	    if guard.is_some() {
+370	        log_line(&ui_weak, format!("[{name}] already running"));
+371	        return;
+372	    }
+373	
+374	    log_line(&ui_weak, format!("[{name}] $ {}", args.join(" ")));
+375	
+376	    let Some((program, rest)) = args.split_first() else {
+377	        log_line(&ui_weak, format!("[{name}] no command given"));
+378	        return;
+379	    };
+380	
+
+... (gap) ...
+
+387	    {
+388	        Ok(child) => child,
+389	        Err(e) => {
+390	            log_line(&ui_weak, format!("[{name}] failed to launch: {e}"));
+391	            return;
+392	        }
+393	    };
+
+... (gap) ...
+
+399	    // Written while the lock is still held so nothing can slip a command in
+400	    // ahead of the boot script.
+401	    if let (Some(code), Some(stdin)) = (init, guard.as_mut()) {
+402	        log_line(&ui_weak, format!("[{name}] > {code}"));
+403	        if let Err(e) = stdin.write_all(format!("{code}\n").as_bytes()).await {
+404	            log_line(&ui_weak, format!("[{name}] boot write failed: {e}"));
+405	        }
+406	        let _ = stdin.flush().await;
+407	    }
+408	    drop(guard);
+409	
+410	    mark_spawned(&ui_weak, node);
+411	
+
+... (gap) ...
+
+485	//   "HUB REC: recording 18 stems -> /path"
+486	//   "HUB REC: stopped -> /path"
+487	
+488	fn set_rec(ui_weak: &slint::Weak<AppWindow>, active: bool, elapsed: Option<&str>, path: Option<&str>) {
+489	    let uw = ui_weak.clone();
+490	    let elapsed = elapsed.map(SharedString::from);
+491	    let path = path.map(SharedString::from);
+492	    let _ = slint::invoke_from_event_loop(move || {
+493	        if let Some(ui) = uw.upgrade() {
+494	            ui.set_rec_active(active);
+495	            if let Some(e) = elapsed {
+496	                ui.set_rec_elapsed(e);
+497	            }
+498	            if let Some(p) = path {
+499	                ui.set_rec_path(p);
+500	            }
+501	        }
+502	    });
+503	}
+504	
+505	fn rec_start_ticker(ui_weak: &slint::Weak<AppWindow>) {
+506	    if REC_TICKER.swap(true, Ordering::SeqCst) {
+
+... (gap) ...
+
+726	// Ports are held out of the SuperCollider/SuperDirt defaults so a stray sclang
+727	// can never take a socket this stack depends on. These must stay in sync with
+728	// Hub/startup.scd and Hub/BootTidal.hs -- see the header comments in both.
+729	const ORBITS_PORT: &str = "6110"; // scsynth; equals Tidal's oBusPort
+730	const VOCALS_PORT: &str = "6111"; // second, independent scsynth
+731	const SCLANG_PORT: &str = "6120"; // sclang langPort; SuperDirt's /n_end responder binds here
+732	
+733	// startup.scd sets s.options.device = "orbits", and the direct scsynth boot
+734	// passes -H orbits, so the JACK client name is the same in both boot paths.
+```
+
+**`src/sections.rs`** — ParsedSong(struct), is_empty(method), all(calls), is_empty(calls), orbits_in_source(function), +3 more
+
+```rust
+136	
+137	/// The fully parsed song timeline, plus metadata for the UI header.
+138	#[derive(Debug, Clone, PartialEq)]
+139	pub struct ParsedSong {
+140	    pub song: String,
+141	    pub groups: Vec<ParsedGroup>,
+142	    pub duration: f32,
+143	}
+144	
+145	impl ParsedSong {
+146	    pub fn is_empty(&self) -> bool {
+147	        self.groups.iter().all(|g| g.tracks.is_empty())
+148	    }
+149	}
+150	
+151	// ── orbit routing ────────────────────────────────────────────
+
+... (gap) ...
+
+157	// We accept a / b / l prefixes (the static groups) and reject
+158	// anything else, so a stray `$` inside an expression never invents
+159	// a lane.
+160	fn orbits_in_source(source: &str) -> Vec<String> {
+161	    let mut out = Vec::new();
+162	    for line in source.lines() {
+163	        let trimmed = line.trim_start();
+164	        // Must start with a letter we recognize, then digits, then `$`.
+165	        let Some(rest) = trimmed.strip_prefix(|c: char| matches!(c, 'a' | 'b' | 'l')) else {
+166	            continue;
+167	        };
+168	        let digits_end = rest
+169	            .find(|c: char| !c.is_ascii_digit())
+170	            .unwrap_or(rest.len());
+171	        if digits_end == 0 {
+172	            continue;
+173	        }
+174	        let after = &rest[digits_end..];
+175	        // Tolerate spaces between the orbit name and `$`.
+176	        let after_trim = after.trim_start();
+177	        if after_trim.starts_with('$') {
+178	            let orbit = format!("{}{}", &trimmed[..1], &rest[..digits_end]);
+179	            if !out.contains(&orbit) {
+180	                out.push(orbit);
+181	            }
+182	        }
+183	    }
+184	    out
+185	}
+186	
+187	// ── JSON tokenization (minimal, tolerant) ────────────────────
+188	// We do not need a full JSON parser: the file is an object with
+189	// known keys. A streaming scan for string scalars and numbers keyed
+```
+
+
+> Some file sections were trimmed for size. For a specific symbol you still need, run another `codegraph_explore` (or `codegraph_node`) with its exact name — line-numbered source, cheaper and more complete than Read.
