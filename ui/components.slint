@@ -16,9 +16,13 @@ import { Theme } from "theme.slint";
 //                   stays until the next press clears it (the Rust
 //                   handler sets working=false, done=true on
 //                   completion and done=false on the next press).
+// long-running: true -> "long running process": border + text take Theme.ready 
+//                    (the same indigo the chain nodes use) and a blue
+//                    readiness dot floats on the top-right corner --
+//                    similar to ChainNode in chain.slint but with a persistent dot.
 //
-// Precedence: done > working > idle. Both default to false, so every
-// existing ArtButton that does not bind them keeps its old look.
+// Precedence: long-running > done > working > idle. 
+// Both default to false, so every existing ArtButton that does not bind them keeps its old look.
 export component ArtButton inherits Rectangle {
     in property <string> label;
     in property <color> accent: Theme.accent-orbits;
@@ -27,6 +31,7 @@ export component ArtButton inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> working: false;
     in property <bool> done: false;
+    in property <bool> long-running: false;
     callback clicked();
 
     // The pulse is a single property animated back and forth; the
@@ -51,13 +56,15 @@ export component ArtButton inherits Rectangle {
     border-color: !root.enabled ? Theme.border
               : root.done ? Theme.ready
               : root.working ? root.accent
+              : root.long-running ? Theme.ready
               : root.accent;
     background: !root.enabled ? Theme.bg
-             : root.done ? Theme.panel
-             : root.working ? root.accent
-             : touch.pressed ? root.accent
-             : touch.has-hover ? root.accent
-             : Theme.panel;
+              : root.done ? Theme.panel
+              : root.working ? root.accent
+              : root.long-running ? Theme.ready
+              : touch.pressed ? root.accent
+              : touch.has-hover ? root.accent
+              : Theme.panel;
     // The working pulse dims the whole button body; done and idle
     // stay at full opacity.
     opacity: !root.enabled ? 0.45
@@ -73,10 +80,11 @@ export component ArtButton inherits Rectangle {
     Text {
         text: root.label;
         color: !root.enabled ? Theme.text-dim
-           : root.done ? Theme.ready
-           : (touch.pressed || touch.has-hover) && root.enabled ? Theme.bg
-           : root.working ? Theme.bg
-           : root.accent;
+            : root.done ? Theme.ready
+            : (touch.pressed || touch.has-hover) && root.enabled ? Theme.bg
+            : root.working ? Theme.bg
+            : root.long-running ? Theme.bg
+            : root.accent;
         font-size: Theme.fs-s * 1px;
         font-weight: 700;
         font-family: Theme.font;
@@ -87,8 +95,9 @@ export component ArtButton inherits Rectangle {
 
     // Blue readiness dot, floats on the top-right corner -- same
     // placement and color as ChainNode's dot in chain.slint.
+    // This shows for done (finished) or long-running states.
     Rectangle {
-        visible: root.done;
+        visible: root.done || root.long-running;
         x: root.width - Theme.dot-size / 2;
         y: -Theme.dot-size / 2;
         width: Theme.dot-size;
