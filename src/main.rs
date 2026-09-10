@@ -682,6 +682,33 @@ async fn relay_restart(ctl: &RelayCtl, tidal_in: &ProcIn, ui_weak: &slint::Weak<
     relay_start(ctl, tidal_in, ui_weak).await;
 }
 
+// Push a one-line command in through the relay's own port rather than writing
+// ghci's stdin directly: a command sent here travels the same path as a block
+// typed in the editor and comes back through the log as a `[tidal] >` line, so
+// the editor and the panel cannot disagree about what the interpreter has seen.
+// One short-lived connection per command, matching what the song runner and the
+// benchmark already do.
+//
+// Note this shares ghci's line buffer with the editor: a command landing while
+// a `:{ ... :}` block is half-typed gets absorbed into that block. Nothing here
+// can see the block boundary, so the editor is expected to be idle.
+//
+// Callers log their own intent; only failures are reported from here.
+async fn send_relay_line(name: &'static str, code: String, ui_weak: slint::Weak<AppWindow>) {
+    let addr = format!("127.0.0.1:{EDITOR_PORT}");
+    let Ok(mut stream) = tokio::net::TcpStream::connect(&addr).await else {
+        log_line(
+            &ui_weak,
+            format!("[{name}] {code} -- relay is down on {addr}, start it from RELAY PORT"),
+        );
+        return;
+    };
+    if let Err(e) = stream.write_all(format!("{code}\n").as_bytes()).await {
+        log_line(&ui_weak, format!("[{name}] write to {addr} failed: {e}"));
+    }
+    let _ = stream.shutdown().await;
+}
+
 // ── quantum ──────────────────────────────────────────────────────────
 
 fn read_current_quantum() -> Option<u32> {
@@ -953,6 +980,10 @@ fn midi_model() -> ModelRc<MidiRow> {
 /// Build the mute group model. Group names come from labels; the
 /// accent color is chosen by group index on the Slint side, so no
 /// color ever crosses into Rust.
+///
+/// Everything starts enabled (audible) and a click mutes it, so the grid
+/// matches the stack's default state: Tidal only silences a pattern when
+/// told to.
 fn mute_model() -> ModelRc<MuteGroupRow> {
     let groups: Vec<MuteGroupRow> = MUTE_GROUP_SLUGS
         .iter()
@@ -961,7 +992,7 @@ fn mute_model() -> ModelRc<MuteGroupRow> {
             let items: Vec<MuteItemRow> = (1..=ORBITS_PER_GROUP)
                 .map(|i| MuteItemRow {
                     label: format!("{letter}{i}").into(),
-                    muted: false,
+                    enabled: true,
                 })
                 .collect();
             MuteGroupRow {
@@ -1463,16 +1494,28 @@ async fn main() -> Result<(), slint::PlatformError> {
             else {
                 return;
             };
-            item.muted = !item.muted;
+            item.enabled = !item.enabled;
             if let Some(vm) = items.as_any().downcast_ref::<VecModel<MuteItemRow>>() {
                 vm.set_row_data(i as usize, item.clone());
             }
-            // Stub: wiring lands with Tidal's /mute control or an sclang-side
-            // orbit mute; the button state is authoritative in the meantime.
-            log_line(
-                &ui_weak,
-                format!("[mutes] {} muted={} (not wired yet)", item.label, item.muted),
-            );
+            // Tidal keys mutes on the pattern name, and every alias in
+            // BootTidal.hs registers itself under its own label
+            // (`a1 pat = p "a1" $ ...`), so the button's label is already the
+            // whole address of the orbit it silences: `mute "a1"`.
+            //
+            // The grid is an intent, not a mirror of the interpreter, and drifts
+            // in both directions. `streamMute` is a `Map.update` over the play
+            // map, so muting a name that has never played is a silent no-op --
+            // the pattern launched into it later arrives audible. Once the slot
+            // does exist the mute is sticky the other way: re-editing `a1 $ ...`
+            // only swaps the pattern, so the button keeps silencing it. Both
+            // cases are accepted for now; the fix is a re-apply pass, not a
+            // different command.
+            let verb = if item.enabled { "unmute" } else { "mute" };
+            let code = format!("{verb} \"{}\"", item.label);
+            log_line(&ui_weak, format!("[mutes] > {code}"));
+            let uw = ui_weak.clone();
+            tokio::spawn(send_relay_line("mutes", code, uw));
         });
     }
 

@@ -24,8 +24,8 @@ export struct StemRow {
 }
 
 export struct MuteItemRow {
-    label: string,
-    muted: bool,
+    label: string,   // pattern name to mute, same spelling as BootTidal.hs
+    enabled: bool,   // all rows start enabled; de-selecting one mutes it
 }
 
 export struct MuteGroupRow {
@@ -286,14 +286,14 @@ export component SidePanel inherits ScrollView {
                             height: 24px;
                             border-radius: Theme.corner;
                             border-width: 1px;
-                            border-color: item.muted ? Theme.danger : Theme.border;
-                            background: item.muted ? Theme.danger : Theme.panel;
+                            border-color: item.enabled ? Theme.border : Theme.danger;
+                            background: item.enabled ? Theme.panel : Theme.danger;
                             mute-touch := TouchArea {
                                 clicked => { root.orbit-mute(gi, ii); }
                             }
                             Text {
                                 text: item.label;
-                                color: item.muted ? Theme.bg : Theme.text-dim;
+                                color: item.enabled ? Theme.text-dim : Theme.bg;
                                 font-size: Theme.fs-xs * 1px;
                                 font-weight: 700;
                                 font-family: Theme.font;
