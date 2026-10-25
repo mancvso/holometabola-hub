@@ -78,6 +78,9 @@ let b1 pat = p "b1" $ pat |< orbit 0
 :{
 let steel = "0.2 1 1"
     gain_slide x y z = gain y
+    gentle = layer[density 1, density 0.125, (# freq 128), (# freq 256), (# freq 512)]
+    luv = "0.7 0.3 0.65 0.25 0.65 0.4 0.5 0.5 0.5"
+    kkick = "~ <reverbkick(3, 8), reverbkick(2, 8), reverbkick(5, 8, 2), [~ ~ reverbkick(7, 8, 4)], reverbkick(12, 8, 4)>"
     ray = "<[vt:2 vt:2 vt:2 [vt:2*2] ~ exxo:3 ], vt:3*4, [vt:3 ~ vt:3*2]>"
     unlayer = layer[density 0.125 . (#freq 100) . (#hcutoff 600), density 0.125 . every 2 (density 0.25). (# freq 210) . (#hcutoff 9000), density 0.125 . struct "~ [[1 0 0 1] [1 0 0 1]] [1 [1 0]] 0" . (# freq 4000)]
 :}

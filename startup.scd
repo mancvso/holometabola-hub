@@ -90,7 +90,7 @@ s.waitForBoot {
 	~dirt = SuperDirt(2, s);
 	~dirt.doNotReadYet = false;     // lazy sample loading off
 	~dirt.loadSoundFiles;
-	~dirt.loadSoundFiles("/home/endo.202511/Studio/Sampling/tidal-samples/*");
+	~dirt.loadSoundFiles("/home/endo/Studio/Sampling/tidal-samples-48k/*");
 
 	// A barrier before start: SuperDirt's own *start does this, and unbarriered
 	// bursts are exactly how the sample allocReads went missing before.
