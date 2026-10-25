@@ -1,0 +1,69 @@
+{
+  "schema": 2,
+  "song": "/home/endo/Studio/Hub/tools/fixtures/basic",
+  "beats_per_cycle": 4,
+  "cps": 0.5,
+  "sections": [
+    {
+      "index": 0,
+      "label": "intro",
+      "start_beat": 0,
+      "duration_beats": 8,
+      "line_range": {
+        "start": 6,
+        "end": 8
+      },
+      "orbits": [
+        "b1"
+      ],
+      "source": "do\n  resetCycles\n  b1 $ s \"bd*2\"",
+      "at": null
+    },
+    {
+      "index": 1,
+      "label": "verse",
+      "start_beat": 8,
+      "duration_beats": 4,
+      "line_range": {
+        "start": 11,
+        "end": 13
+      },
+      "orbits": [
+        "l2",
+        "b1"
+      ],
+      "source": "do\n  l2 $ sound \"super\"\n  b1 $ s \"sn\"",
+      "at": null
+    },
+    {
+      "index": 2,
+      "label": "bridge",
+      "start_beat": 12,
+      "duration_beats": 16,
+      "line_range": {
+        "start": 15,
+        "end": 16
+      },
+      "orbits": [
+        "a1"
+      ],
+      "source": "do -- bridge @16b\n  a1 $ s \"fx\"",
+      "at": null
+    },
+    {
+      "index": 3,
+      "label": "tail",
+      "start_beat": 28,
+      "duration_beats": 32,
+      "line_range": {
+        "start": 19,
+        "end": 20
+      },
+      "orbits": [
+        "b1"
+      ],
+      "source": "do\n  b1 $ slow $ s \"lt\"",
+      "at": null
+    }
+  ]
+}

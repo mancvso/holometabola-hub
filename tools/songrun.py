@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Play a song file section by section and profile it, unattended.
 
+DEPRECATED (PLAN R2): superseded by tools/tidalscan.py, which writes the
+schema-v2 sections.json the app edits and plays from. songrun.py keeps
+writing the legacy `.sections.json` (wall-clock `at`/`dwell`) in the old
+shape until it is deleted; it remains the owner of that dot-file path
+(R12/C2: one writer per path), and the app reads that shape only as a
+legacy fallback. Do not add features here.
+
 A song file is a sequence of `do` blocks, one per section. This fires each in
 turn into a live ghci, marks the transition so cost can be attributed to it,
 and runs tools/orbitprof.py alongside. Feed the result to tools/orbitreport.py
