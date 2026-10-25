@@ -118,6 +118,19 @@ fn set_node_state(ui_weak: &slint::Weak<AppWindow>, node: NodeId, state: NodeSta
 // AppWindow methods, keeping the call sites one line each.
 type BoolSetter = fn(&AppWindow, bool);
 
+// ── song document state (WP-C, R11) ───────────────────────────
+// The in-Rust timeline document, shared between the UI callbacks
+// that edit it and the APPLY/SAVE paths that load and persist it.
+// Locking discipline: only the UI thread (and invoke_from_event_loop
+// closures) touches it, so the std Mutex never contends with Slint;
+// the player (WP-D) takes an immutable snapshot instead of sharing
+// the lock across tasks.
+type DocState = Arc<std::sync::Mutex<Option<sections::SongDoc>>>;
+
+fn doc_dirty(state: &DocState) -> bool {
+    state.lock().unwrap().as_ref().is_some_and(|d| d.dirty)
+}
+
 fn btn_press(ui_weak: &slint::Weak<AppWindow>, set_working: BoolSetter, set_done: BoolSetter) {
     let uw = ui_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
@@ -1062,6 +1075,14 @@ async fn main() -> Result<(), slint::PlatformError> {
     ui.set_song_index(0);
     ui.set_song_title("pick a song and press APPLY".into());
 
+    // The in-Rust document (R11): the single owner of the timeline
+    // data the UI edits. Slint only reports taps and button presses;
+    // every number changes here. Accessed on the UI thread only (the
+    // same rule that keeps model building out of spawn_blocking),
+    // but SongDoc is Send so the player can take a snapshot across
+    // to the beat clock (WP-D).
+    let doc_state: DocState = Arc::new(std::sync::Mutex::new(None));
+
     // APPLY: parse the selected song folder's .sections.json and push
     // the parsed timeline to the SONG view. Runs on the tokio runtime
     // (parse_song_sections does blocking file I/O) and marshals the
@@ -1070,9 +1091,20 @@ async fn main() -> Result<(), slint::PlatformError> {
     // was selected and whether any sections were found.
     {
         let ui_weak = ui_weak.clone();
+        let doc_state = doc_state.clone();
         ui.on_song_apply(move || {
             log_line(&ui_weak, "[song] APPLY pressed".into());
             btn_press(&ui_weak, AppWindow::set_song_apply_working, AppWindow::set_song_apply_done);
+            // Unsaved edits are discarded over a switch, with a
+            // warning (R11/C10): the switch *is* the "new file read
+            // triggered by the UI" of R12, and the dirty dot in the
+            // selector bar makes the loss visible before the press.
+            if doc_dirty(&doc_state) {
+                log_line(
+                    &ui_weak,
+                    "[song] WARN: discarding unsaved edits on song switch (C10)".into(),
+                );
+            }
             // Read the selection on the UI thread: Slint property/model
             // access from a blocking thread panics (the ModelRc and the
             // generated getters are not Sync in practice), and that
@@ -1095,20 +1127,28 @@ async fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
             let ui_weak = ui_weak.clone();
+            let doc_state = doc_state.clone();
             tokio::task::spawn_blocking(move || {
                 let dir = std::path::Path::new(sections::RUNS_DIR).join(&song);
                 log_line(&ui_weak, format!("[song] parsing {}", dir.display()));
-                let parsed = sections::parse_song_sections(&dir);
-                let duration = parsed.duration;
-                let track_n: usize = parsed.groups.iter().map(|g| g.tracks.len()).sum();
-                let title = if parsed.is_empty() {
-                    format!("{song}: no .sections.json yet (run the bench)")
+                let (doc, warnings) = sections::read_song(&dir);
+                for w in &warnings {
+                    log_line(&ui_weak, format!("[song] WARN: {w}"));
+                }
+                let length = doc.length_beats();
+                let title = if doc.is_empty() {
+                    format!("{song}: no sections.json yet (run tools/tidalscan.py)")
                 } else {
-                    format!("{} · {} tracks · {:.0}s", parsed.song, track_n, duration)
+                    format!(
+                        "{} · {} sections · {} beats",
+                        doc.song,
+                        doc.sections.len(),
+                        length
+                    )
                 };
                 log_line(
                     &ui_weak,
-                    format!("[song] {song}: {track_n} tracks, {:.0}s", duration),
+                    format!("[song] {song}: {} sections, {length} beats", doc.sections.len()),
                 );
                 // The Slint ModelRc holds an Rc and is !Send, so the
                 // model is built on the UI thread from the Send parsed
@@ -1116,8 +1156,10 @@ async fn main() -> Result<(), slint::PlatformError> {
                 let ui_weak = ui_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_song_groups(sections::to_group_model(&parsed));
-                        ui.set_song_duration(duration);
+                        *doc_state.lock().unwrap() = Some(doc.clone());
+                        ui.set_song_groups(sections::to_group_model(&doc));
+                        ui.set_song_length_beats(length as i32);
+                        ui.set_beats_per_cycle(doc.beats_per_cycle as i32);
                         ui.set_song_title(title.into());
                     }
                     btn_done(&ui_weak, AppWindow::set_song_apply_working, AppWindow::set_song_apply_done);

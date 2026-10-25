@@ -61,22 +61,19 @@ export component AppWindow inherits Window {
     in property <color> bench-status-color: Theme.text-dim;
 
     // ── song timeline ───────────────────────────────────────
-    // Fed on demand (never at startup) by src/sections.rs:
-    // the user picks a song folder from `song-options` and presses
-    // APPLY; Rust reads runs/<song>/.sections.json and pushes the
-    // parsed groups here. Not every folder has a .sections.json --
-    // the bench creates it -- so a selection with no file shows an
-    // empty timeline rather than erroring.
-    //
-    // The .sections.json schema is the existing flat-list format
-    // from tools/songrun.py (sections with `at` / `dwell` /
-    // `source`). When that tool is re-implemented in Rust the
-    // schema will adapt to the UI -- a nested groups/tracks/
-    // sections shape -- and the parser will thin to a load.
+    // Fed on demand (never at startup) by src/sections.rs: the user
+    // picks a song folder and presses APPLY; Rust reads
+    // runs/<song>/sections.json (schema v2, PLAN §5) into the
+    // in-Rust document and pushes the view model here. Times are
+    // integer musical beats (R5), never wall-clock seconds; the
+    // pixel axis is pixels-per-beat on the timeline (R14).
     in property <[string]> song-options: [];          // folder names under runs/
     in-out property <int> song-index: 0;              // selected dropdown entry
     in property <[GroupData]> song-groups: [];        // parsed timeline groups
-    in property <float> song-duration: 0.0;          // seconds, drives the ruler
+    in property <int> song-length-beats: 0;           // beats, drives ruler + viewport
+    in property <int> beats-per-cycle: 4;             // from the document (R18/R19)
+    // C9: hidden (-1) until the WP-D beat clock binds it.
+    in property <float> song-playhead-beats: -1.0;
     in property <string> song-title: "—";             // song path / status line
     callback song-apply();
 
@@ -419,7 +416,11 @@ export component AppWindow inherits Window {
             SongTimeline {
                 vertical-stretch: 1;
                 groups: root.song-groups;
-                song-duration: root.song-duration;
+                song-length-beats: root.song-length-beats;
+                beats-per-cycle: root.beats-per-cycle;
+                song-playhead-beats: root.song-playhead-beats;
+                // pixels-per-beat stays at its design default (R14:
+                // no zoom control; change the constant and rebuild).
             }
         }
 

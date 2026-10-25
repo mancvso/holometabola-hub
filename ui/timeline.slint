@@ -1,17 +1,24 @@
 // ─────────────────────────────────────────────────────────────
-// SONG view: read-only DAW-style timeline of a song run.
-// Shape matches tools/songrun.py output (.sections.json +
-// .marks): groups of tracks, sections placed by start time.
-// Fed by Rust once the song runner is embedded; mock data for now.
+// SONG view: DAW-style timeline of a song, in musical beats.
+// Sections are placed by start_beat / duration_beats (integers,
+// PLAN §4/R5); the pixel axis is pixels-per-beat (R14). Grid and
+// ruler speak cycles (C6): one line and tick per cycle, a number
+// every four cycles. Fed by Rust from runs/<song>/sections.json
+// (WP-C document); the stepper interaction lives in the selector
+// bar of app.slint (R17), not per block.
 // ─────────────────────────────────────────────────────────────
 import { ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 
 export struct SectionData {
     name: string,
-    start-time: float,   // seconds
-    duration: float,     // seconds
+    start-beat: int,
+    duration-beats: int,
     is-active: bool,
+    // Identity in the Rust document (index into SongDoc.sections).
+    // Carried so a tap can be resolved without positional guessing;
+    // the model itself is read-only from Slint (guard 1).
+    section-id: int,
 }
 
 export struct TrackData {
@@ -116,16 +123,29 @@ export component SongTimeline inherits Rectangle {
     preferred-height: 560px;
     background: Theme.bg;
 
-    // Pixels per second on the lane axis
-    in property <float> time-scale: 8.0;
-    // Total song length in seconds (drives ruler + viewport)
-    in property <float> song-duration: 1500.0;
-    // Playhead in seconds; negative hides it
-    in property <float> playhead: -1.0;
+    // ── musical-time axis (R14/C9) ───────────────────────────
+    // Pixels per beat. No zoom control (R14): change this constant
+    // and rebuild. Bound nowhere else on purpose -- the default is
+    // the design value.
+    in property <float> pixels-per-beat: 4.0;
+    // Total song length in beats (drives ruler + viewport width).
+    in property <int> song-length-beats: 64;
+    // Beats per cycle, from the document (R18/R19: never hardcoded
+    // at a call site; the grid and coarse steps both read this).
+    in property <int> beats-per-cycle: 4;
+    // Playhead in beats; negative hides it (C9: bound only when the
+    // WP-D beat clock is wired -- default -1 keeps it invisible).
+    in property <float> song-playhead-beats: -1.0;
 
-    // Injected by Rust once the song runner is embedded. Kept populated
-    // with a mock here so the timeline is always instantiated with data;
-    // Rust overwrites it on APPLY.
+    // Number of cycle columns to draw: capped by the song length
+    // (guard 15), plus one so a section ending mid-view still has a
+    // closing line.
+    property <int> cycle-count:
+        (root.song-length-beats / max(root.beats-per-cycle, 1) + 1);
+
+    // Injected by Rust on APPLY. Kept populated with a small beat-
+    // based mock so the timeline is always instantiated with data;
+    // Rust overwrites it.
     in property <[GroupData]> groups: [
         {
             name: "BEATS",
@@ -136,27 +156,8 @@ export component SongTimeline inherits Rectangle {
                     is-muted: false,
                     is-soloed: false,
                     sections: [
-                        { name: "omminous", start-time: 0, duration: 30, is-active: true },
-                        { name: "higher energy", start-time: 90, duration: 30, is-active: true },
-                        { name: "deep beat @60", start-time: 480, duration: 60, is-active: true },
-                    ]
-                },
-                {
-                    name: "b5",
-                    is-muted: true,
-                    is-soloed: false,
-                    sections: [
-                        { name: "section-3", start-time: 60, duration: 30, is-active: false },
-                        { name: "interrupts", start-time: 210, duration: 30, is-active: false },
-                    ]
-                },
-                {
-                    name: "b6",
-                    is-muted: false,
-                    is-soloed: true,
-                    sections: [
-                        { name: "omminous", start-time: 0, duration: 60, is-active: true },
-                        { name: "RADIANT", start-time: 630, duration: 30, is-active: true },
+                        { name: "intro", start-beat: 0, duration-beats: 16, is-active: true, section-id: 0 },
+                        { name: "groove", start-beat: 16, duration-beats: 8, is-active: true, section-id: 1 },
                     ]
                 },
             ]
@@ -170,17 +171,7 @@ export component SongTimeline inherits Rectangle {
                     is-muted: false,
                     is-soloed: false,
                     sections: [
-                        { name: "section-3", start-time: 60, duration: 30, is-active: true },
-                        { name: "playful", start-time: 330, duration: 30, is-active: true },
-                    ]
-                },
-                {
-                    name: "l4",
-                    is-muted: false,
-                    is-soloed: false,
-                    sections: [
-                        { name: "section-7", start-time: 180, duration: 30, is-active: true },
-                        { name: "moving wings", start-time: 780, duration: 30, is-active: true },
+                        { name: "section-2", start-beat: 8, duration-beats: 4, is-active: true, section-id: 2 },
                     ]
                 },
             ]
@@ -194,17 +185,7 @@ export component SongTimeline inherits Rectangle {
                     is-muted: false,
                     is-soloed: false,
                     sections: [
-                        { name: "omminous", start-time: 0, duration: 90, is-active: true },
-                        { name: "subito", start-time: 300, duration: 30, is-active: true },
-                        { name: "finally", start-time: 540, duration: 30, is-active: true },
-                    ]
-                },
-                {
-                    name: "a5",
-                    is-muted: true,
-                    is-soloed: false,
-                    sections: [
-                        { name: "higher energy", start-time: 90, duration: 60, is-active: false },
+                        { name: "pad", start-beat: 4, duration-beats: 12, is-active: true, section-id: 3 },
                     ]
                 },
             ]
@@ -262,7 +243,7 @@ export component SongTimeline inherits Rectangle {
         ScrollView {
             vertical-stretch: 1;
             viewport-width: root.header-w
-                + root.song-duration * root.time-scale * 1px
+                + root.song-length-beats * root.pixels-per-beat * 1px
                 + 40px;
 
             VerticalBox {
@@ -270,7 +251,9 @@ export component SongTimeline inherits Rectangle {
                 spacing: Theme.spacing-l;
                 padding: Theme.pad-m;
 
-                // Time ruler
+                // Time ruler: one tick per cycle, a cycle number every
+                // four cycles (C6). Exact beat numbers live in the
+                // stepper-row readout, not here.
                 Rectangle {
                     height: 26px;
                     background: Theme.panel;
@@ -282,15 +265,19 @@ export component SongTimeline inherits Rectangle {
                         Rectangle {
                             horizontal-stretch: 1;
                             clip: true;
-                            // One tick every 30s, up to 30 minutes
-                            for i in 60 : Rectangle {
-                                visible: (i * 30.0) <= root.song-duration;
-                                x: (i * 30.0) * root.time-scale * 1px;
-                                width: 40px;
+                            for i in root.cycle-count : Rectangle {
+                                x: (i * root.beats-per-cycle) * root.pixels-per-beat * 1px;
+                                width: 60px;
                                 height: 100%;
+                                Rectangle {
+                                    width: 1px;
+                                    height: 100%;
+                                    background: Theme.border;
+                                }
                                 Text {
+                                    visible: Math.mod(i, 4) == 0;
                                     x: 4px;
-                                    text: "\{i * 30}s";
+                                    text: "c\{i}";
                                     color: Theme.text-dim;
                                     font-size: Theme.fs-xs * 1px;
                                     font-family: Theme.font;
@@ -341,20 +328,38 @@ export component SongTimeline inherits Rectangle {
                             border-color: Theme.border-soft;
                             clip: true;
 
-                            for section in track.sections : SectionBlock {
+                            // Cycle grid per lane (one line per cycle,
+                            // C6). Integer-strided and capped by
+                            // cycle-count (guard 15).
+                            for i in root.cycle-count : Rectangle {
+                                x: (i * root.beats-per-cycle) * root.pixels-per-beat * 1px;
+                                width: 1px;
+                                height: 100%;
+                                background: Theme.border-soft;
+                            }
+
+                            for section[section-index] in track.sections : SectionBlock {
                                 name: section.name;
                                 is-active: section.is-active;
                                 base-color: root.accent-for(group-index);
-                                x: section.start-time * root.time-scale * 1px;
-                                width: max(section.duration * root.time-scale * 1px, 30px);
+                                x: section.start-beat * root.pixels-per-beat * 1px;
+                                // 30px is a render floor only (guard 6):
+                                // the data floor is 1 beat, enforced in
+                                // Rust. Legality (R10/C4) never touches
+                                // widths here.
+                                width: max(section.duration-beats * root.pixels-per-beat * 1px, 30px);
                                 height: 28px;
                                 y: 3px;
                             }
 
-                            // Playhead
+                            // Playhead (C9: hidden until the beat clock
+                            // binds song-playhead-beats). Declared last
+                            // on purpose: item order is z-order and it
+                            // must not eat taps (guard 4) -- it carries
+                            // no TouchArea.
                             Rectangle {
-                                visible: root.playhead >= 0.0;
-                                x: root.playhead * root.time-scale * 1px;
+                                visible: root.song-playhead-beats >= 0.0;
+                                x: root.song-playhead-beats * root.pixels-per-beat * 1px;
                                 width: 2px;
                                 height: 100%;
                                 background: Theme.warn;
