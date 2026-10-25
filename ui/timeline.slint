@@ -100,12 +100,18 @@ component TrackHeader inherits Rectangle {
 component SectionBlock inherits Rectangle {
     in property <string> name: "Section";
     in property <bool> is-active: true;
+    in property <bool> is-selected: false;
     in property <color> base-color: Theme.accent-orbits;
 
     border-radius: Theme.corner;
-    border-width: 1px;
+    // A selected block gets a heavier frame (Theme.warn) -- the only
+    // visual state the stepper interaction adds; all numbers behind
+    // it are decided in Rust (guard 1).
+    border-width: root.is-selected ? 3px : 1px;
     background: root.base-color;
-    border-color: root.is-active ? root.base-color.brighter(30%) : root.base-color.darker(40%);
+    border-color: root.is-selected
+        ? Theme.warn
+        : (root.is-active ? root.base-color.brighter(30%) : root.base-color.darker(40%));
     opacity: root.is-active ? 0.9 : 0.3;
 
     Text {
@@ -136,6 +142,16 @@ export component SongTimeline inherits Rectangle {
     // Playhead in beats; negative hides it (C9: bound only when the
     // WP-D beat clock is wired -- default -1 keeps it invisible).
     in property <float> song-playhead-beats: -1.0;
+
+    // ── interaction surface (E2) ──────────────────────────
+    // Slint reports taps and highlights the selection; nothing else
+    // happens here. Clamping, neighbour checks and the dirty flag
+    // are Rust's job (R10/R11, guard 1).
+    in property <bool> song-dirty: false;
+    in property <int> sel-group: -1;
+    in property <int> sel-track: -1;
+    in property <int> sel-index: -1;
+    callback section-tapped(int, int, int);
 
     // Number of cycle columns to draw: capped by the song length
     // (guard 15), plus one so a section ending mid-view still has a
@@ -230,8 +246,10 @@ export component SongTimeline inherits Rectangle {
                     vertical-alignment: center;
                 }
                 Text {
-                    text: "read-only · fed by the song runner once embedded";
-                    color: Theme.text-dim;
+                    // Editable in beats: tap a block, step it in the
+                    // selector bar, SAVE writes it back (R17).
+                    text: root.song-dirty ? "editable · unsaved edits ●" : "editable · tap a block to select";
+                    color: root.song-dirty ? Theme.warn : Theme.text-dim;
                     font-size: Theme.fs-xs * 1px;
                     font-family: Theme.font;
                     vertical-alignment: center;
@@ -338,10 +356,7 @@ export component SongTimeline inherits Rectangle {
                                 background: Theme.border-soft;
                             }
 
-                            for section[section-index] in track.sections : SectionBlock {
-                                name: section.name;
-                                is-active: section.is-active;
-                                base-color: root.accent-for(group-index);
+                            for section[section-index] in track.sections : Rectangle {
                                 x: section.start-beat * root.pixels-per-beat * 1px;
                                 // 30px is a render floor only (guard 6):
                                 // the data floor is 1 beat, enforced in
@@ -350,6 +365,28 @@ export component SongTimeline inherits Rectangle {
                                 width: max(section.duration-beats * root.pixels-per-beat * 1px, 30px);
                                 height: 28px;
                                 y: 3px;
+
+                                SectionBlock {
+                                    name: section.name;
+                                    is-active: section.is-active;
+                                    base-color: root.accent-for(group-index);
+                                    // Selection is positional here; the
+                                    // numbers stay in the document (R11).
+                                    is-selected: group-index == root.sel-group
+                                        && track-index == root.sel-track
+                                        && section-index == root.sel-index;
+                                }
+
+                                // Declared AFTER the visuals it covers:
+                                // item order is z-order (guard 4). One
+                                // TouchArea per block, clicked only --
+                                // the first click selects and does not
+                                // move (R17).
+                                TouchArea {
+                                    clicked => {
+                                        root.section-tapped(group-index, track-index, section-index);
+                                    }
+                                }
                             }
 
                             // Playhead (C9: hidden until the beat clock

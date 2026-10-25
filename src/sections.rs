@@ -46,7 +46,7 @@
 
 use std::path::{Path, PathBuf};
 
-use slint::{Model, ModelRc, SharedString, VecModel};
+use slint::{ModelRc, SharedString, VecModel};
 
 use crate::{GroupData, SectionData, TrackData};
 
@@ -988,6 +988,7 @@ pub fn list_song_folders(runs_dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
 
     // ── orbit routing (unchanged from the seconds era) ───────
 
@@ -1528,6 +1529,33 @@ mod tests {
                 && orbits.iter().any(|o| o.starts_with('a')),
             "ecdysis uses beats, leads and ambients"
         );
+    }
+
+    // §11 legacy line, on real material: today's .sections.json (only
+    // at/dwell) loads through the FALLBACK path (schema 1) with the
+    // same sections the seconds-era parser showed, never the v2 one.
+    #[test]
+    fn real_legacy_bench_files_load_via_fallback() {
+        for song in ["exuvia", "impulso", "fisura", "hatch", "apolysis", "exxo"] {
+            let dir = std::path::Path::new(super::RUNS_DIR).join(song);
+            let legacy_file = dir.join(LEGACY_SECTIONS_FILE);
+            let Ok(text) = std::fs::read_to_string(&legacy_file) else {
+                continue; // not benched here
+            };
+            let (doc, warnings) = parse_sections_json(&text, &legacy_file);
+            assert_eq!(doc.schema, 1, "{song}: must load as legacy");
+            assert!(!doc.is_empty(), "{song}: legacy file must still show sections");
+            assert!(doc_is_solid(&doc), "{song}: solid read");
+            assert!(
+                warnings.iter().any(|w| w.contains("legacy")),
+                "{song}: fallback path must warn, got {warnings:?}"
+            );
+            // Beats are whole integers after the projection, floor 1.
+            assert!(
+                doc.sections.iter().all(|s| s.duration_beats >= 1 && s.start_beat >= 0),
+                "{song}: beats well-formed"
+            );
+        }
     }
 }
 

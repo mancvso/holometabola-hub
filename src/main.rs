@@ -2,6 +2,7 @@ mod midi;
 mod recordings;
 mod labels;
 mod sections;
+mod player;
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::path::PathBuf;
@@ -129,6 +130,158 @@ type DocState = Arc<std::sync::Mutex<Option<sections::SongDoc>>>;
 
 fn doc_dirty(state: &DocState) -> bool {
     state.lock().unwrap().as_ref().is_some_and(|d| d.dirty)
+}
+
+// ── E2 helpers: selection, rebuild, readout ─────────────────
+// Slint reported (group, track, index); everything numeric happens
+// here against the document (R11). The selection's document index
+// survives model rebuilds (positions in the rebuilt model are
+// stable: routing is deterministic over the same sections).
+type SelState = Arc<std::sync::Mutex<Option<usize>>>;
+
+fn rebuild_model(ui: &AppWindow, doc: &sections::SongDoc) {
+    ui.set_song_groups(sections::to_group_model(doc));
+    ui.set_song_length_beats(doc.length_beats() as i32);
+    ui.set_beats_per_cycle(doc.beats_per_cycle as i32);
+    ui.set_song_dirty(doc.dirty);
+}
+
+// The stepper-row readout (C6): exact beat numbers, decomposed into
+// cycle + beat, live here -- not on the ruler.
+fn selection_readout(doc: &sections::SongDoc, idx: usize) -> SharedString {
+    match doc.sections.get(idx) {
+        Some(s) => {
+            let bpc = doc.beats_per_cycle.max(1);
+            format!(
+                "{} · start {} · len {} · cycle {} beat {}",
+                s.label,
+                s.start_beat,
+                s.duration_beats,
+                s.start_beat / bpc,
+                s.start_beat % bpc
+            )
+            .into()
+        }
+        None => "no selection".into(),
+    }
+}
+
+// ── the fire loop (WP-D, R7/R8) ───────────────────────────
+// Polls the beat clock and triggers each section when
+// `current_beat >= start_beat` and it has not fired yet. There is
+// no sleep(dwell): the clock is the schedule, so a resetCycles
+// observed anywhere (panel, relay, or this loop's own fire text)
+// re-bases the beat and re-arms every trigger (generation bump).
+//
+// Blocks go out through `send_line` -- the app's single stdin owner
+// (R8) -- which also means the interceptor sees the player's own
+// text (R21). Latency: TRIGGER_OFFSET_S is applied to the trigger
+// time only (C5/R13), inside player::should_fire.
+async fn fire_loop(
+    session: u64,
+    doc: Arc<sections::SongDoc>,
+    tidal_in: ProcIn,
+    ui_weak: slint::Weak<AppWindow>,
+) {
+    let clk = player::clock();
+    // Beat 0 is *now* for this session. This arms the app's own
+    // counter only -- the app still does not send a transport-start
+    // `resetCycles` (R7): section 1 carries the real one (R21), and
+    // the interceptor re-bases again the moment that block lands,
+    // which is the exact beat zero. Between press and that block,
+    // the short armed window only matters for placing section 1's
+    // trigger, which is start_beat 0 = immediate either way.
+    clk.rebase();
+    // Song-wide rate from the document; setcps is sent once here and
+    // never re-sent per section (R19). The command rides send_line,
+    // so the interceptor applies it like any human-typed line.
+    let bpm = doc.cps * doc.beats_per_cycle as f64 * 60.0;
+    let cmd = if bpm == bpm.trunc() {
+        format!("setcps({}/60/{})", bpm as i64, doc.beats_per_cycle)
+    } else {
+        format!("setcps({}/60/{})", bpm, doc.beats_per_cycle)
+    };
+    send_line("tidal", tidal_in.clone(), ui_weak.clone(), cmd).await;
+
+    log_line(
+        &ui_weak,
+        format!(
+            "[play] session {session}: {} sections, {} beats, cps={:.4}, bpc={}",
+            doc.sections.len(),
+            doc.length_beats(),
+            doc.cps,
+            doc.beats_per_cycle
+        ),
+    );
+
+    let mut fired = vec![false; doc.sections.len()];
+    let mut gen = clk.generation();
+    // The section whose fire text caused the current generation, if
+    // any. Re-arming marks everything else unfired but keeps this
+    // one fired: section 1 carries resetCycles (R21), so without
+    // this the block would re-base the clock and immediately re-fire
+    // itself forever. As the beat passes its start again on the next
+    // cycle it fires fresh, like every other section.
+    let mut last_fired: Option<usize> = None;
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(5));
+    loop {
+        ticker.tick().await;
+        if !player::session_active(session) {
+            log_line(&ui_weak, format!("[play] session {session} stopped"));
+            break;
+        }
+        let g = clk.generation();
+        if g != gen {
+            gen = g;
+            // resetCycles re-based the counter: re-arm triggers.
+            for (i, f) in fired.iter_mut().enumerate() {
+                *f = last_fired == Some(i);
+            }
+            log_line(&ui_weak, format!("[play] re-base (gen {g}): triggers re-armed"));
+        }
+        let beat = clk.beat();
+        let mut all_fired = true;
+        for (i, s) in doc.sections.iter().enumerate() {
+            if player::should_fire(beat, s.start_beat, fired[i]) {
+                fired[i] = true;
+                last_fired = Some(i);
+                let wall = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+                log_line(
+                    &ui_weak,
+                    format!("[play] beat {beat:.2} · wall {wall:.3} · fire '{}'", s.label),
+                );
+                // Keep the ghci block wrapper (WP-B): an unwrapped
+                // multi-line `do` silently runs only its first line.
+                send_line(
+                    "tidal",
+                    tidal_in.clone(),
+                    ui_weak.clone(),
+                    player::wrap(&s.label, &s.source),
+                )
+                .await;
+            }
+            if !fired[i] {
+                all_fired = false;
+            }
+        }
+        if all_fired {
+            log_line(
+                &ui_weak,
+                "[play] every section fired; clock keeps running -- STOP hushes".into(),
+            );
+            break;
+        }
+    }
+
+    let uw = ui_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(ui) = uw.upgrade() {
+            ui.set_song_playing(false);
+        }
+    });
 }
 
 fn btn_press(ui_weak: &slint::Weak<AppWindow>, set_working: BoolSetter, set_done: BoolSetter) {
@@ -471,12 +624,23 @@ async fn boot_server(
 }
 
 // Write one line into a running child's stdin.
+//
+// This is the single choke point for everything that reaches ghci:
+// the panel buttons, the editor relay (serve_editor forwards every
+// relayed line through here) and the player's own fire text. The
+// WP-D interceptor therefore lives here -- one `note_sent` call
+// covers all three re-base sources required by R7/R21.
 async fn send_line(
     name: &'static str,
     slot: ProcIn,
     ui_weak: slint::Weak<AppWindow>,
     code: String,
 ) {
+    if name == "tidal" {
+        if let Some(note) = player::clock().note_sent(&code) {
+            log_line(&ui_weak, format!("[beat] {note}"));
+        }
+    }
     let mut guard = slot.lock().await;
     let Some(stdin) = guard.as_mut() else {
         log_line(&ui_weak, format!("[{name}] not running -- boot it first"));
@@ -1083,15 +1247,20 @@ async fn main() -> Result<(), slint::PlatformError> {
     // to the beat clock (WP-D).
     let doc_state: DocState = Arc::new(std::sync::Mutex::new(None));
 
-    // APPLY: parse the selected song folder's .sections.json and push
-    // the parsed timeline to the SONG view. Runs on the tokio runtime
-    // (parse_song_sections does blocking file I/O) and marshals the
+    // E2 selection state: index into SongDoc.sections (not model
+    // positions -- those are for the highlight; this is for edits).
+    let sel_state: SelState = Arc::new(std::sync::Mutex::new(None));
+
+    // APPLY: parse the selected song folder's sections document and
+    // push the parsed timeline to the SONG view. Runs on the tokio
+    // runtime (read_song does blocking file I/O) and marshals the
     // resulting model back onto the UI thread. A missing or empty file
     // yields an empty timeline -- the title line reports which song
     // was selected and whether any sections were found.
     {
         let ui_weak = ui_weak.clone();
         let doc_state = doc_state.clone();
+        let sel_state = sel_state.clone();
         ui.on_song_apply(move || {
             log_line(&ui_weak, "[song] APPLY pressed".into());
             btn_press(&ui_weak, AppWindow::set_song_apply_working, AppWindow::set_song_apply_done);
@@ -1128,10 +1297,44 @@ async fn main() -> Result<(), slint::PlatformError> {
             };
             let ui_weak = ui_weak.clone();
             let doc_state = doc_state.clone();
+            let sel_state = sel_state.clone();
             tokio::task::spawn_blocking(move || {
                 let dir = std::path::Path::new(sections::RUNS_DIR).join(&song);
                 log_line(&ui_weak, format!("[song] parsing {}", dir.display()));
-                let (doc, warnings) = sections::read_song(&dir);
+                let (mut doc, mut warnings) = sections::read_song(&dir);
+                // R9 half-written state: a file that exists but does
+                // not parse tries the one-level .bak (R12); if that
+                // also fails the current view stays untouched and the
+                // log demands an explicit RELOAD (APPLY again after a
+                // re-scan fixes the file).
+                if doc.path.exists() && !sections::doc_is_solid(&doc) {
+                    if sections::restore_backup(&dir) {
+                        let (rec, w2) = sections::read_song(&dir);
+                        if sections::doc_is_solid(&rec) {
+                            log_line(
+                                &ui_weak,
+                                format!(
+                                    "[song] {} was corrupt -- recovered from sections.json.bak (R12)",
+                                    doc.path.display()
+                                ),
+                            );
+                            doc = rec;
+                            warnings = w2;
+                        }
+                    }
+                    if !sections::doc_is_solid(&doc) {
+                        log_line(
+                            &ui_weak,
+                            format!(
+                                "[song] RELOAD: {} is corrupt -- keeping the current view; \
+                                 re-scan with tools/tidalscan.py, then APPLY again",
+                                doc.path.display()
+                            ),
+                        );
+                        btn_done(&ui_weak, AppWindow::set_song_apply_working, AppWindow::set_song_apply_done);
+                        return;
+                    }
+                }
                 for w in &warnings {
                     log_line(&ui_weak, format!("[song] WARN: {w}"));
                 }
@@ -1154,6 +1357,7 @@ async fn main() -> Result<(), slint::PlatformError> {
                 // model is built on the UI thread from the Send parsed
                 // data, not inside spawn_blocking.
                 let ui_weak = ui_weak.clone();
+                let sel_state = sel_state.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_weak.upgrade() {
                         *doc_state.lock().unwrap() = Some(doc.clone());
@@ -1161,11 +1365,290 @@ async fn main() -> Result<(), slint::PlatformError> {
                         ui.set_song_length_beats(length as i32);
                         ui.set_beats_per_cycle(doc.beats_per_cycle as i32);
                         ui.set_song_title(title.into());
+                        // Fresh load: selection and dirty flag reset
+                        // (the document is the file again).
+                        *sel_state.lock().unwrap() = None;
+                        ui.set_sel_group(-1);
+                        ui.set_sel_track(-1);
+                        ui.set_sel_index(-1);
+                        ui.set_sel_readout("no selection".into());
+                        ui.set_song_dirty(false);
                     }
                     btn_done(&ui_weak, AppWindow::set_song_apply_working, AppWindow::set_song_apply_done);
                 });
             });
         });
+    }
+
+    // ── E2: tap, steppers, save ─────────────────────────────
+    // The document is the single editor (R11). The selection index
+    // is the position in SongDoc.sections, resolved once at tap time
+    // from the model row's section-id (identity, not guesswork).
+    {
+        let uw = ui_weak.clone();
+        let doc_state = doc_state.clone();
+        let sel_state = sel_state.clone();
+        ui.on_section_tapped(move |g, t, i| {
+            let Some(ui) = uw.upgrade() else { return };
+            // The first click selects and does NOT move (test §11):
+            // this handler writes no document fields.
+            let groups = ui.get_song_groups();
+            let doc_idx = (|| {
+                let grp = groups.row_data(g as usize)?;
+                let trk = grp.tracks.row_data(t as usize)?;
+                let sec = trk.sections.row_data(i as usize)?;
+                Some(sec.section_id.max(0) as usize)
+            })();
+            let Some(doc_idx) = doc_idx else {
+                log_line(&uw, format!("[song] tap outside any block ({g},{t},{i}) ignored"));
+                return;
+            };
+            *sel_state.lock().unwrap() = Some(doc_idx);
+            ui.set_sel_group(g);
+            ui.set_sel_track(t);
+            ui.set_sel_index(i);
+            if let Some(d) = doc_state.lock().unwrap().as_ref() {
+                ui.set_sel_readout(selection_readout(d, doc_idx));
+            }
+        });
+    }
+
+    // One closure shape for all four step callbacks: mutate via the
+    // SongDoc method (clamps live in sections.rs, R10), rebuild the
+    // model on a real change, mark dirty. Weak cloned per
+    // registration (guard 9).
+    macro_rules! step_callback {
+        ($setter:ident, $op:expr) => {{
+            let uw = ui_weak.clone();
+            let doc_state = doc_state.clone();
+            let sel_state = sel_state.clone();
+            ui.$setter(move |delta| {
+                let Some(ui) = uw.upgrade() else { return };
+                let Some(idx) = *sel_state.lock().unwrap() else {
+                    log_line(&uw, "[song] step with no selection ignored".into());
+                    return;
+                };
+                let mut guard = doc_state.lock().unwrap();
+                let Some(doc) = guard.as_mut() else { return };
+                if $op(doc, idx, delta as i64) {
+                    rebuild_model(&ui, doc);
+                    ui.set_sel_readout(selection_readout(doc, idx));
+                } else {
+                    // At a legality wall (R10/C4) or no-op: the
+                    // document does not move and does not go dirty.
+                    log_line(
+                        &uw,
+                        format!("[song] section {idx}: step({delta}) clamped -- no change"),
+                    );
+                }
+            });
+        }};
+    }
+    // Single click: 1 beat (R18). Left pair shifts start (R16),
+    // right pair changes length.
+    step_callback!(on_step_start, |d: &mut sections::SongDoc, i, v| d.step_start(i, v));
+    step_callback!(on_step_length, |d: &mut sections::SongDoc, i, v| d.step_length(i, v));
+
+    // Double-click: the coarse step is exactly one cycle
+    // (beats-per-cycle from the document, never hardcoded, R18).
+    // Slint fires clicked twice before double-clicked, so two beats
+    // have already been applied by the time we get here: top the
+    // move up to one full cycle, which is dir*(bpc-2) more beats.
+    {
+        let uw = ui_weak.clone();
+        let doc_state = doc_state.clone();
+        let sel_state = sel_state.clone();
+        ui.on_step_start_cycle(move |dir| {
+            let Some(ui) = uw.upgrade() else { return };
+            let Some(idx) = *sel_state.lock().unwrap() else { return };
+            let mut guard = doc_state.lock().unwrap();
+            let Some(doc) = guard.as_mut() else { return };
+            let extra = doc.beats_per_cycle - 2;
+            if extra != 0 && doc.step_start(idx, dir as i64 * extra) {
+                rebuild_model(&ui, doc);
+                ui.set_sel_readout(selection_readout(doc, idx));
+            }
+        });
+    }
+    {
+        let uw = ui_weak.clone();
+        let doc_state = doc_state.clone();
+        let sel_state = sel_state.clone();
+        ui.on_step_length_cycle(move |dir| {
+            let Some(ui) = uw.upgrade() else { return };
+            let Some(idx) = *sel_state.lock().unwrap() else { return };
+            let mut guard = doc_state.lock().unwrap();
+            let Some(doc) = guard.as_mut() else { return };
+            let extra = doc.beats_per_cycle - 2;
+            if extra != 0 && doc.step_length(idx, dir as i64 * extra) {
+                rebuild_model(&ui, doc);
+                ui.set_sel_readout(selection_readout(doc, idx));
+            }
+        });
+    }
+
+    // SAVE (R12): serialize -> tmp + rename -> .bak -> re-parse ->
+    // rebuild -> clear dirty. A failed re-parse keeps the last-good
+    // document and leaves dirty true (guard 11): a truncated write
+    // can never become a blank timeline that the next save commits.
+    {
+        let uw = ui_weak.clone();
+        let doc_state = doc_state.clone();
+        ui.on_song_save(move || {
+            btn_press(&uw, AppWindow::set_song_save_working, AppWindow::set_song_save_done);
+            let doc = {
+                let guard = doc_state.lock().unwrap();
+                guard.clone()
+            };
+            let Some(doc) = doc else {
+                log_line(&uw, "[song] SAVE with nothing loaded".into());
+                btn_done(&uw, AppWindow::set_song_save_working, AppWindow::set_song_save_done);
+                return;
+            };
+            if !doc.dirty {
+                log_line(&uw, "[song] nothing to save".into());
+                btn_done(&uw, AppWindow::set_song_save_working, AppWindow::set_song_save_done);
+                return;
+            }
+            let uw = uw.clone();
+            let doc_state = doc_state.clone();
+            tokio::task::spawn_blocking(move || {
+                let path = match sections::save_document(&doc) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        // dirty stays true (R12).
+                        log_line(&uw, format!("[song] SAVE failed: {e} -- edits kept in view"));
+                        btn_done(&uw, AppWindow::set_song_save_working, AppWindow::set_song_save_done);
+                        return;
+                    }
+                };
+                let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+                let (fresh, warnings) = sections::read_song(&dir);
+                for w in &warnings {
+                    log_line(&uw, format!("[song] WARN after re-parse: {w}"));
+                }
+                let round_trip_ok =
+                    sections::doc_is_solid(&fresh) && fresh.sections == doc.sections;
+                if !round_trip_ok {
+                    log_line(
+                        &uw,
+                        "[song] RELOAD: re-parse disagreed with the write -- keeping the \
+                         in-view document, dirty stays true (R9/R12)"
+                            .into(),
+                    );
+                    btn_done(&uw, AppWindow::set_song_save_working, AppWindow::set_song_save_done);
+                    return;
+                }
+                let label = fresh.song.clone();
+                let length = fresh.length_beats();
+                let mut fresh = fresh;
+                fresh.dirty = false;
+                fresh.path = path.clone();
+                log_line(&uw, format!("[song] saved {}", path.display()));
+                let uw2 = uw.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = uw2.upgrade() {
+                        *doc_state.lock().unwrap() = Some(fresh.clone());
+                        rebuild_model(&ui, &fresh);
+                        ui.set_song_title(format!("{label} · {length} beats · saved").into());
+                    }
+                    btn_done(&uw2, AppWindow::set_song_save_working, AppWindow::set_song_save_done);
+                });
+            });
+        });
+    }
+
+    // Quit with unsaved edits: warn, then close (C10/R11). A dialog
+    // is out of the question for this app (R9: nothing the UI has to
+    // interpret); the dirty dot already showed the state.
+    {
+        let uw = ui_weak.clone();
+        let doc_state = doc_state.clone();
+        ui.window().on_close_requested(move || {
+            if doc_dirty(&doc_state) {
+                log_line(
+                    &uw,
+                    "[song] WARN: quitting with unsaved timeline edits -- discarded (C10)".into(),
+                );
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
+    }
+
+    // PLAY / STOP (WP-D): arm the beat clock with the loaded
+    // document, run the fire loop against ghci's stdin (the app's
+    // own pipe -- single owner, R8), hush on stop. Re-clicking PLAY
+    // while playing starts a fresh session: the old loop notices its
+    // session id is no longer current and exits.
+    {
+        let ui_weak = ui_weak.clone();
+        let doc_state = doc_state.clone();
+        let tidal_in = tidal_in.clone();
+        ui.on_song_play(move || {
+            let doc = {
+                let guard = doc_state.lock().unwrap();
+                guard.clone()
+            };
+            let Some(doc) = doc else {
+                log_line(&ui_weak, "[play] nothing loaded -- APPLY a song first".into());
+                return;
+            };
+            if doc.is_empty() {
+                log_line(&ui_weak, "[play] empty document, nothing to fire".into());
+                return;
+            }
+            let session = player::session_counter().fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_song_playing(true);
+            }
+            tokio::spawn(fire_loop(
+                session,
+                Arc::new(doc),
+                tidal_in.clone(),
+                ui_weak.clone(),
+            ));
+        });
+    }
+    {
+        let ui_weak = ui_weak.clone();
+        let tidal_in = tidal_in.clone();
+        ui.on_song_stop(move || {
+            // Invalidate the live session, then hush (the player is
+            // the one owner of hush on this path, R8).
+            player::session_counter().store(0, Ordering::SeqCst);
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_song_playing(false);
+            }
+            log_line(&ui_weak, "[play] STOP: hushing".into());
+            tokio::spawn(send_line(
+                "tidal",
+                tidal_in.clone(),
+                ui_weak.clone(),
+                "hush".to_string(),
+            ));
+        });
+    }
+
+    // Playhead (C9): WP-D landed in this plan, so the beat clock
+    // drives it. A UI-thread timer reads the clock while playing;
+    // -1 hides the line. Beats only -- never a wall-clock number.
+    {
+        let uw = ui_weak.clone();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(50),
+            move || {
+                let Some(ui) = uw.upgrade() else { return };
+                if ui.get_song_playing() {
+                    ui.set_song_playhead_beats(player::clock().beat() as f32);
+                } else if ui.get_song_playhead_beats() >= 0.0 {
+                    ui.set_song_playhead_beats(-1.0);
+                }
+            },
+        );
+        // keep the timer alive for the life of the event loop
+        std::mem::forget(timer);
     }
 
     // Editor relay, up for the life of the app -- independent of whether Tidal

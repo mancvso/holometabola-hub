@@ -11,6 +11,42 @@ import { SidePanel, MidiRow, SessionRow, StemRow, MuteGroupRow } from "sidebar.s
 import { SongTimeline, GroupData } from "timeline.slint";
 import { BenchView } from "bench.slint";
 
+// One stepper button of the selector-bar row (R17/R18): visual +
+// exactly one TouchArea. It reports press events only -- clicked is
+// the 1-beat step, double-clicked is the coarse step and Rust turns
+// it into one cycle (beats-per-cycle is never consulted here).
+component StepButton inherits Rectangle {
+    in property <string> label: "?";
+    in property <color> accent: Theme.accent-tidal;
+    in property <bool> enabled: true;
+    callback clicked();
+    callback double-clicked();
+
+    width: 62px;
+    height: Theme.btn-s-h;
+    border-radius: Theme.corner;
+    background: root.enabled ? Theme.node-bg : Theme.panel;
+    border-width: 1px;
+    border-color: root.enabled ? root.accent : Theme.border;
+
+    Text {
+        text: root.label;
+        color: root.enabled ? Theme.text : Theme.text-dim;
+        font-size: Theme.fs-xs * 1px;
+        font-weight: 700;
+        font-family: Theme.font;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        double-clicked => { root.double-clicked(); }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "Live Audio Control Plane";
     preferred-width: 1400px;
@@ -76,6 +112,34 @@ export component AppWindow inherits Window {
     in property <float> song-playhead-beats: -1.0;
     in property <string> song-title: "—";             // song path / status line
     callback song-apply();
+
+    // Transport (WP-D, R8: the player lives inside the app). The
+    // beat clock starts on PLAY; STOP hushes. The timeline-resident
+    // transport UI is Phase 2 -- these live in the selector bar.
+    in property <bool> song-playing: false;
+    callback song-play();
+    callback song-stop();
+
+    // ── timeline editing (E2, R11/R17) ──────────────────────
+    // Slint holds no arithmetic: it reports which block was tapped
+    // and which button was pressed, Rust decides the numbers. The
+    // steppers are one fixed row in this selector bar (R17) -- four
+    // TouchAreas for any song length, no per-block widgets.
+    // Single click steps 1 beat (R18); the *-cycle callbacks are the
+    // double-click path and keep the magnitude math in Rust too.
+    in property <bool> song-dirty: false;
+    in property <int> sel-group: -1;
+    in property <int> sel-track: -1;
+    in property <int> sel-index: -1;
+    in property <string> sel-readout: "no selection";
+    callback section-tapped(int, int, int);
+    callback step-start(int);
+    callback step-length(int);
+    callback step-start-cycle(int);
+    callback step-length-cycle(int);
+    callback song-save();
+    in-out property <bool> song-save-working: false;
+    in-out property <bool> song-save-done: false;
 
     // ── callbacks: boot chain ────────────────────────────────
     callback boot-orbits-scsynth();
@@ -401,6 +465,107 @@ export component AppWindow inherits Window {
                         clicked => { root.song-apply(); }
                     }
 
+                    Rectangle { width: 1px; background: Theme.border; }
+
+                    // Transport (WP-D): PLAY arms the beat clock and
+                    // fires sections through the app's own ghci pipe;
+                    // STOP hushes. HUSH itself stays on the GRAPH view
+                    // button -- the player shares that one stdin owner.
+                    ArtButton {
+                        label: root.song-playing ? "PLAYING" : "PLAY";
+                        accent: Theme.accent-tidal;
+                        small: true;
+                        preferred-width: 90px;
+                        width: 90px;
+                        height: Theme.btn-s-h;
+                        enabled: root.song-groups.length > 0 && !root.song-playing;
+                        clicked => { root.song-play(); }
+                    }
+
+                    ArtButton {
+                        label: "STOP";
+                        accent: Theme.danger;
+                        danger: true;
+                        small: true;
+                        preferred-width: 80px;
+                        width: 80px;
+                        height: Theme.btn-s-h;
+                        enabled: root.song-playing;
+                        clicked => { root.song-stop(); }
+                    }
+
+                    Rectangle { width: 1px; background: Theme.border; }
+
+                    // ── stepper row (R17) ──────────────────────
+                    // Left pair shifts start (R16: shift, never
+                    // stretch); right pair changes length. Enabled
+                    // only with a selection; double-click = 1 cycle
+                    // (R18), magnitude computed from beats-per-cycle
+                    // in Rust, never here.
+                    StepButton {
+                        label: "◀▹ start";
+                        enabled: root.sel-index >= 0;
+                        clicked => { root.step-start(-1); }
+                        double-clicked => { root.step-start-cycle(-1); }
+                    }
+                    StepButton {
+                        label: "start ▹▶";
+                        enabled: root.sel-index >= 0;
+                        clicked => { root.step-start(1); }
+                        double-clicked => { root.step-start-cycle(1); }
+                    }
+                    StepButton {
+                        label: "◁ len";
+                        accent: Theme.accent-orbits;
+                        enabled: root.sel-index >= 0;
+                        clicked => { root.step-length(-1); }
+                        double-clicked => { root.step-length-cycle(-1); }
+                    }
+                    StepButton {
+                        label: "len ▷";
+                        accent: Theme.accent-orbits;
+                        enabled: root.sel-index >= 0;
+                        clicked => { root.step-length(1); }
+                        double-clicked => { root.step-length-cycle(1); }
+                    }
+
+                    // Selection readout: exact beat numbers live here,
+                    // not on the ruler (C6). Rust formats it.
+                    Text {
+                        text: root.sel-readout;
+                        color: Theme.text;
+                        font-size: Theme.fs-xs * 1px;
+                        font-family: Theme.font;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+
+                    // Dirty dot: the loss is visible before APPLY or
+                    // quit discards it (C10).
+                    Text {
+                        visible: root.song-dirty;
+                        text: "● unsaved";
+                        color: Theme.warn;
+                        font-size: Theme.fs-xs * 1px;
+                        font-weight: 700;
+                        font-family: Theme.font;
+                        vertical-alignment: center;
+                    }
+
+                    ArtButton {
+                        label: "SAVE";
+                        accent: Theme.accent-quantum;
+                        small: true;
+                        preferred-width: 80px;
+                        width: 80px;
+                        height: Theme.btn-s-h;
+                        enabled: root.song-dirty;
+                        working: root.song-save-working;
+                        done: root.song-save-done;
+                        clicked => { root.song-save(); }
+                    }
+
                     Text {
                         text: root.song-title;
                         color: Theme.text-dim;
@@ -419,6 +584,11 @@ export component AppWindow inherits Window {
                 song-length-beats: root.song-length-beats;
                 beats-per-cycle: root.beats-per-cycle;
                 song-playhead-beats: root.song-playhead-beats;
+                song-dirty: root.song-dirty;
+                sel-group: root.sel-group;
+                sel-track: root.sel-track;
+                sel-index: root.sel-index;
+                section-tapped(g, t, i) => { root.section-tapped(g, t, i); }
                 // pixels-per-beat stays at its design default (R14:
                 // no zoom control; change the constant and rebuild).
             }
