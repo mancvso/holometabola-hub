@@ -338,9 +338,18 @@ export component SongTimeline inherits Rectangle {
                             is-muted: track.is-muted;
                         }
 
-                        // Lane
+                        // Lane. Slint 1.17 does NOT stretch layout
+                        // children on the cross axis, and a `height:
+                        // 100%` on a layout child is ignored: an
+                        // unstretched lane collapses to its measured
+                        // content (~20px) and clip:true then slices the
+                        // blocks -- the half-height bug, present since
+                        // the seconds era. Pin it to the row explicitly
+                        // (a plain Rectangle's height binding IS honored
+                        // inside a box, verified with a render probe).
                         Rectangle {
                             horizontal-stretch: 1;
+                            height: 36px;
                             background: Theme.panel;
                             border-width: 1px;
                             border-color: Theme.border-soft;
@@ -363,10 +372,19 @@ export component SongTimeline inherits Rectangle {
                                 // Rust. Legality (R10/C4) never touches
                                 // widths here.
                                 width: max(section.duration-beats * root.pixels-per-beat * 1px, 30px);
-                                height: 28px;
+                                // Blocks fill the lane band: 30px of the
+                                // 36px row, 2px of breathing top and
+                                // bottom (36 - 2 - 30 = 4 >= the 2px y).
+                                height: 30px;
                                 y: 3px;
 
                                 SectionBlock {
+                                    // Explicit fill: children of a plain
+                                    // Rectangle auto-fill in theory, but
+                                    // pin the size so a parent bound
+                                    // change cannot half-size them.
+                                    width: 100%;
+                                    height: 100%;
                                     name: section.name;
                                     is-active: section.is-active;
                                     base-color: root.accent-for(group-index);
@@ -383,6 +401,8 @@ export component SongTimeline inherits Rectangle {
                                 // the first click selects and does not
                                 // move (R17).
                                 TouchArea {
+                                    width: 100%;
+                                    height: 100%;
                                     clicked => {
                                         root.section-tapped(group-index, track-index, section-index);
                                     }
