@@ -94,9 +94,9 @@ component SectionWidget inherits Rectangle {
     Text {
         text: root.name;
         color: root.is_active ? #ffffff : #aaaaaa;
-        font-size: 11px;
+        font-size: 8px;
         x: 5px;
-        vertical-alignment: center;
+        vertical-alignment: top;
     }
 }
 
@@ -245,10 +245,10 @@ export component DawTimelineView inherits Window {
                         Text {
                             text: group.name;
                             color: #888888;
-                            font-size: 12px;
+                            font-size: 8px;
                             font-weight: 600;
                             x: 8px;
-                            vertical-alignment: center;
+                            vertical-alignment: top;
                         }
                     }
 
@@ -283,7 +283,7 @@ export component DawTimelineView inherits Window {
                                 // Coordinate mapping based on time
                                 x: section.start_time * root.time_scale * 1px;
                                 width: section.duration * root.time_scale * 1px;
-                                height: 34px;
+                                height: 40px;
                                 y: 3px;
                             }
                         }
