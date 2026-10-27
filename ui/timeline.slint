@@ -126,16 +126,16 @@ component SectionBlock inherits Rectangle {
 
 export component SongTimeline inherits Rectangle {
     preferred-width: 900px;
-    preferred-height: 560px;
+    preferred-height: 760px;
     background: Theme.bg;
 
     // ── musical-time axis (R14/C9) ───────────────────────────
     // Pixels per beat. No zoom control (R14): change this constant
     // and rebuild. Bound nowhere else on purpose -- the default is
     // the design value.
-    in property <float> pixels-per-beat: 4.0;
+    in property <float> pixels-per-beat: 8.0;
     // Total song length in beats (drives ruler + viewport width).
-    in property <int> song-length-beats: 64;
+    in property <int> song-length-beats: 16;
     // Beats per cycle, from the document (R18/R19: never hardcoded
     // at a call site; the grid and coarse steps both read this).
     in property <int> beats-per-cycle: 4;
@@ -273,7 +273,7 @@ export component SongTimeline inherits Rectangle {
                 // four cycles (C6). Exact beat numbers live in the
                 // stepper-row readout, not here.
                 Rectangle {
-                    height: 26px;
+                    height: 20px;
                     background: Theme.panel;
                     border-width: 1px;
                     border-color: Theme.border-soft;
@@ -312,7 +312,7 @@ export component SongTimeline inherits Rectangle {
 
                     // Group header
                     Rectangle {
-                        height: 22px;
+                        height: 20px;
                         background: Theme.node-bg;
                         border-radius: Theme.corner;
                         Text {
@@ -328,7 +328,7 @@ export component SongTimeline inherits Rectangle {
                     }
 
                     for track[track-index] in group.tracks : HorizontalBox {
-                        height: 36px;
+                        height: (track-index > 2 && track-index < 4) ? 48px : 24px;
                         spacing: 0px;
 
                         TrackHeader {
@@ -349,7 +349,7 @@ export component SongTimeline inherits Rectangle {
                         // inside a box, verified with a render probe).
                         Rectangle {
                             horizontal-stretch: 1;
-                            height: 36px;
+                            height:  (track-index > 2 && track-index < 4) ? 48px : 24px;
                             background: Theme.panel;
                             border-width: 1px;
                             border-color: Theme.border-soft;
@@ -375,8 +375,8 @@ export component SongTimeline inherits Rectangle {
                                 // Blocks fill the lane band: 30px of the
                                 // 36px row, 2px of breathing top and
                                 // bottom (36 - 2 - 30 = 4 >= the 2px y).
-                                height: 30px;
-                                y: 3px;
+                                height: (track-index > 2 && track-index < 4) ? 40px : 20px;
+                                y:  (track-index > 2 && track-index < 4) ? 4px : 2px;
 
                                 SectionBlock {
                                     // Explicit fill: children of a plain
